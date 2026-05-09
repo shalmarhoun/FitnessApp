@@ -99,10 +99,120 @@ select:focus-visible {
   letter-spacing: 0.18em;
 }
 
-.splash-glow {
+.brand-mark-shell {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 28%;
   background:
-    radial-gradient(circle at 50% 42%, rgba(143, 111, 232, 0.34), transparent 22rem),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.92), rgba(239, 230, 255, 0.72)),
+    radial-gradient(circle at 34% 16%, rgba(255, 255, 255, 0.9), transparent 42%);
+  box-shadow:
+    0 18px 42px rgba(91, 64, 132, 0.18),
+    0 0 0 1px rgba(255, 255, 255, 0.92),
+    inset 0 1px 0 rgba(255, 255, 255, 0.92);
+}
+
+.brand-mark-shell img {
+  position: relative;
+  z-index: 2;
+  object-fit: cover;
+  filter: saturate(1.08) contrast(1.04);
+}
+
+.brand-mark-fallback {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  color: #8f6fe8;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 42%;
+  font-weight: 900;
+  letter-spacing: -0.08em;
+}
+
+.splash-glow {
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(143, 111, 232, 0.34), transparent 23rem),
+    radial-gradient(circle at 18% 18%, rgba(245, 200, 215, 0.32), transparent 22rem),
+    radial-gradient(circle at 82% 78%, rgba(201, 182, 255, 0.36), transparent 24rem),
     linear-gradient(145deg, #fffaff, #f2ebff 52%, #ffffff);
+  background-size: 130% 130%, 120% 120%, 125% 125%, 100% 100%;
+  animation: luxury-gradient 8s ease-in-out infinite alternate;
+}
+
+.splash-logo-wrap {
+  position: relative;
+  z-index: 2;
+  animation: logo-glow 3.8s ease-in-out infinite;
+}
+
+.splash-ribbon {
+  position: absolute;
+  inset: 8% -18% auto auto;
+  width: 58rem;
+  height: 26rem;
+  border-radius: 999px;
+  background: linear-gradient(125deg, rgba(255, 255, 255, 0.62), rgba(210, 190, 255, 0.18), rgba(255, 255, 255, 0.04));
+  filter: blur(0.2px);
+  transform: rotate(-26deg);
+  animation: ribbon-drift 9s ease-in-out infinite alternate;
+}
+
+.splash-arc {
+  position: absolute;
+  border: 1px solid rgba(255, 255, 255, 0.58);
+  border-radius: 999px;
+  opacity: 0.82;
+  transform: rotate(-22deg);
+}
+
+.splash-arc.one {
+  right: -11rem;
+  top: -8rem;
+  width: 34rem;
+  height: 34rem;
+}
+
+.splash-arc.two {
+  left: -12rem;
+  bottom: -14rem;
+  width: 38rem;
+  height: 24rem;
+}
+
+.splash-particle {
+  position: absolute;
+  width: 0.42rem;
+  height: 0.42rem;
+  border-radius: 999px;
+  background: rgba(143, 111, 232, 0.34);
+  box-shadow: 0 0 22px rgba(143, 111, 232, 0.3);
+  animation: float-particle 7s ease-in-out infinite;
+}
+
+.splash-particle:nth-of-type(4) {
+  animation-delay: -2s;
+  transform: scale(0.75);
+}
+
+.splash-particle:nth-of-type(5) {
+  animation-delay: -4s;
+  transform: scale(1.2);
+}
+
+.splash-particle:nth-of-type(6) {
+  animation-delay: -1.3s;
+}
+
+.splash-particle:nth-of-type(7) {
+  animation-delay: -5s;
+  transform: scale(0.8);
 }
 
 .kettlebell-art {
@@ -187,6 +297,48 @@ select:focus-visible {
     radial-gradient(18px 10px at 18px 16px, currentColor 28%, transparent 30%) 0 0 / 56px 28px repeat-x;
   opacity: 0.68;
   mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+}
+
+@keyframes luxury-gradient {
+  from {
+    background-position: 45% 42%, 8% 12%, 84% 84%, center;
+  }
+  to {
+    background-position: 54% 48%, 14% 18%, 76% 72%, center;
+  }
+}
+
+@keyframes logo-glow {
+  0%,
+  100% {
+    filter: drop-shadow(0 18px 34px rgba(143, 111, 232, 0.22));
+    transform: translateY(0);
+  }
+  50% {
+    filter: drop-shadow(0 24px 46px rgba(143, 111, 232, 0.34));
+    transform: translateY(-4px);
+  }
+}
+
+@keyframes ribbon-drift {
+  from {
+    translate: -1.2rem 0;
+  }
+  to {
+    translate: 1.2rem 1.4rem;
+  }
+}
+
+@keyframes float-particle {
+  0%,
+  100% {
+    translate: 0 0;
+    opacity: 0.26;
+  }
+  50% {
+    translate: 0 -22px;
+    opacity: 0.72;
+  }
 }
 
 @media (max-width: 640px) {

@@ -6,6 +6,8 @@ import {
   BarChart3,
   Calendar,
   Check,
+  ChevronLeft,
+  ChevronRight,
   ChevronDown,
   ChevronUp,
   Download,
@@ -13,7 +15,6 @@ import {
   Flame,
   Heart,
   Home,
-  Music2,
   Play,
   Plus,
   RotateCcw,
@@ -69,6 +70,20 @@ const pageMotion = {
 
 const uid = () => crypto.randomUUID();
 const brandIconSrc = `${import.meta.env.BASE_URL}icons/icon-192.png`;
+const isSameDate = (a: Date, b: Date) => dateKey(a) === dateKey(b);
+const formatDisplayDate = (date: Date) => date.toLocaleDateString("en", { weekday: "long", month: "short", day: "numeric" });
+const startOfMonth = (date: Date) => new Date(date.getFullYear(), date.getMonth(), 1);
+const addMonths = (date: Date, amount: number) => new Date(date.getFullYear(), date.getMonth() + amount, 1);
+const findWorkoutForDate = (programDays: ProgramDay[], date: Date) => programDays.find((day) => day.weekday === weekdayName(date));
+const nextWorkoutFromDate = (programDays: ProgramDay[], date: Date) => {
+  for (let offset = 1; offset <= 7; offset += 1) {
+    const candidate = new Date(date);
+    candidate.setDate(candidate.getDate() + offset);
+    const workout = findWorkoutForDate(programDays, candidate);
+    if (workout) return { date: candidate, workout };
+  }
+  return null;
+};
 
 const loadActiveSession = (): ActiveSession | null => {
   try {
@@ -129,29 +144,50 @@ const Stat = ({ label, value, icon }: { label: string; value: string; icon: Reac
   </div>
 );
 
-const NumberField = ({ value, onChange, step = 1, min = 0 }: { value: number; onChange: (value: number) => void; step?: number; min?: number }) => (
-  <div className="flex h-11 items-center rounded-2xl border border-silk bg-white/85">
-    <button aria-label="Decrease value" className="flex h-full w-10 items-center justify-center text-plum" onClick={() => onChange(Math.max(min, Number((value - step).toFixed(1))))} type="button">
-      <ChevronDown size={17} />
-    </button>
-    <input
-      className="h-full w-14 bg-transparent text-center text-sm font-black text-ink outline-none"
-      value={value}
-      type="number"
-      min={min}
-      step={step}
-      aria-label="Number value"
-      onChange={(event) => onChange(Number(event.target.value))}
-    />
-    <button aria-label="Increase value" className="flex h-full w-10 items-center justify-center text-plum" onClick={() => onChange(Number((value + step).toFixed(1)))} type="button">
-      <ChevronUp size={17} />
-    </button>
-  </div>
+const NumberField = ({
+  value,
+  onChange,
+  step = 1,
+  min = 0,
+  label,
+  unit,
+}: {
+  value: number;
+  onChange: (value: number) => void;
+  step?: number;
+  min?: number;
+  label: string;
+  unit?: string;
+}) => (
+  <label className="block min-w-0">
+    <span className="mb-1 block text-[10px] font-black uppercase tracking-[0.12em] text-[#75677f]">{label}</span>
+    <div className="flex h-12 min-w-0 items-center rounded-2xl border border-silk bg-white/90 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]">
+      <button aria-label={`Decrease ${label}`} className="flex h-full w-9 shrink-0 items-center justify-center text-plum" onClick={() => onChange(Math.max(min, Number((value - step).toFixed(1))))} type="button">
+        <ChevronDown size={17} />
+      </button>
+      <input
+        className="h-full min-w-0 flex-1 bg-transparent text-center text-base font-black text-ink outline-none"
+        value={value}
+        type="number"
+        min={min}
+        step={step}
+        aria-label={label}
+        inputMode="decimal"
+        onChange={(event) => onChange(Number(event.target.value))}
+      />
+      {unit && <span className="pr-2 text-[11px] font-black uppercase text-lavender">{unit}</span>}
+      <button aria-label={`Increase ${label}`} className="flex h-full w-9 shrink-0 items-center justify-center text-plum" onClick={() => onChange(Number((value + step).toFixed(1)))} type="button">
+        <ChevronUp size={17} />
+      </button>
+    </div>
+  </label>
 );
 
 function App() {
   const [data, setData] = useState<AppData>(() => loadData());
   const [view, setView] = useState<View>("home");
+  const [selectedDate, setSelectedDate] = useState(() => new Date());
+  const [calendarOpen, setCalendarOpen] = useState(false);
   const [activeSession, setActiveSession] = useState<ActiveSession | null>(() => loadActiveSession());
   const [completedSession, setCompletedSession] = useState<WorkoutSession | null>(null);
   const [showSplash, setShowSplash] = useState(() => !sessionStorage.getItem("fitnessSmSplashSeen"));
@@ -163,7 +199,7 @@ function App() {
     const timer = window.setTimeout(() => {
       sessionStorage.setItem("fitnessSmSplashSeen", "true");
       setShowSplash(false);
-    }, 1300);
+    }, 2200);
     return () => window.clearTimeout(timer);
   }, [showSplash]);
 
@@ -176,17 +212,21 @@ function App() {
     }
   }, [activeSession]);
 
-  const today = weekdayName();
-  const todayWorkout = useMemo(
-    () => data.program.days.find((day) => day.weekday === today) ?? data.program.days[0],
-    [data.program.days, today],
+  const selectedWeekday = weekdayName(selectedDate);
+  const selectedWorkout = useMemo(
+    () => data.program.days.find((day) => day.weekday === selectedWeekday),
+    [data.program.days, selectedWeekday],
   );
+  const defaultWorkout = data.program.days[0];
+  const today = weekdayName();
+  const actualTodayWorkout = useMemo(() => data.program.days.find((day) => day.weekday === today), [data.program.days, today]);
 
   const updateData = (updater: (data: AppData) => AppData) => {
     setData((current) => updater({ ...current, meta: { ...current.meta, updatedAt: new Date().toISOString() } }));
   };
 
-  const startWorkout = (day = todayWorkout) => {
+  const startWorkout = (day = selectedWorkout ?? defaultWorkout) => {
+    if (!day) return;
     const previous = latestPreviousSession(data.sessions, day.id);
     if (activeSession) {
       setView("workout");
@@ -246,7 +286,7 @@ function App() {
       <div className="mx-auto w-full max-w-5xl px-4 py-5 md:px-8 md:py-6">
         <main className="min-w-0 flex-1">
           <AnimatePresence mode="wait">
-            {view === "home" && <Dashboard key="home" data={data} todayWorkout={todayWorkout} startWorkout={startWorkout} setView={setView} />}
+            {view === "home" && <Dashboard key="home" data={data} selectedDate={selectedDate} selectedWorkout={selectedWorkout} startWorkout={startWorkout} setView={setView} openCalendar={() => setCalendarOpen(true)} />}
             {view === "workout" && (
               <Workout
                 key="workout"
@@ -267,7 +307,17 @@ function App() {
           </AnimatePresence>
         </main>
       </div>
-      <MobileNav view={view} setView={setView} startWorkout={() => startWorkout(todayWorkout)} hasActiveSession={Boolean(activeSession)} />
+      <MobileNav view={view} setView={setView} startWorkout={() => actualTodayWorkout ? startWorkout(actualTodayWorkout) : setView("measurements")} hasActiveSession={Boolean(activeSession)} hasTodayWorkout={Boolean(actualTodayWorkout)} />
+      <AnimatePresence>
+        {calendarOpen && (
+          <CalendarSheet
+            data={data}
+            selectedDate={selectedDate}
+            onSelectDate={setSelectedDate}
+            onClose={() => setCalendarOpen(false)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -280,7 +330,19 @@ const navItems: { view: View; label: string; icon: React.ReactNode }[] = [
   { view: "settings", label: "Settings", icon: <Settings size={20} /> },
 ];
 
-const MobileNav = ({ view, setView, startWorkout, hasActiveSession }: { view: View; setView: (view: View) => void; startWorkout: () => void; hasActiveSession: boolean }) => (
+const MobileNav = ({
+  view,
+  setView,
+  startWorkout,
+  hasActiveSession,
+  hasTodayWorkout,
+}: {
+  view: View;
+  setView: (view: View) => void;
+  startWorkout: () => void;
+  hasActiveSession: boolean;
+  hasTodayWorkout: boolean;
+}) => (
   <nav className="glass fixed bottom-3 left-4 right-4 z-40 mx-auto grid max-w-xl grid-cols-6 items-center rounded-[30px] p-2 md:-bottom-5">
     {navItems.slice(0, 2).map((item) => (
       <button
@@ -294,11 +356,11 @@ const MobileNav = ({ view, setView, startWorkout, hasActiveSession }: { view: Vi
         {item.label}
       </button>
     ))}
-    <button aria-label={hasActiveSession ? "Resume Workout" : "Start Workout"} className="flex flex-col items-center gap-1 rounded-2xl py-2 text-[11px] font-bold text-white" onClick={hasActiveSession ? () => setView("workout") : startWorkout} type="button">
+    <button aria-label={hasActiveSession ? "Resume Workout" : hasTodayWorkout ? "Start Workout" : "Open Measurements"} className="flex flex-col items-center gap-1 rounded-2xl py-2 text-[11px] font-bold text-white" onClick={hasActiveSession ? () => setView("workout") : startWorkout} type="button">
       <span className="-mt-7 mb-1 flex h-14 w-14 items-center justify-center rounded-full bg-lavender shadow-glow ring-8 ring-white/70">
-        {hasActiveSession ? <Timer size={25} /> : <Plus size={28} />}
+        {hasActiveSession ? <Timer size={25} /> : hasTodayWorkout ? <Plus size={28} /> : <Ruler size={25} />}
       </span>
-      {hasActiveSession ? "Live" : "Start"}
+      {hasActiveSession ? "Live" : hasTodayWorkout ? "Start" : "Measure"}
     </button>
     {navItems.slice(2).map((item) => (
       <button
@@ -316,14 +378,17 @@ const MobileNav = ({ view, setView, startWorkout, hasActiveSession }: { view: Vi
 );
 
 const BrandMark = ({ size = "md", showName = false }: { size?: "sm" | "md" | "lg"; showName?: boolean }) => {
-  const sizes = { sm: "h-9 w-9", md: "h-14 w-14", lg: "h-24 w-24" };
+  const sizes = { sm: "h-10 w-10", md: "h-16 w-16", lg: "h-28 w-28" };
   return (
     <div className="flex items-center gap-3">
-      <img aria-hidden className={`shrink-0 rounded-[28%] shadow-glow ${sizes[size]}`} src={brandIconSrc} alt="" />
+      <span className={`brand-mark-shell ${sizes[size]}`}>
+        <img aria-hidden className="h-full w-full rounded-[28%]" src={brandIconSrc} alt="" />
+        <span className="brand-mark-fallback">SM</span>
+      </span>
       {showName && (
         <div>
-          <p className="brand-wordmark text-xs font-black uppercase text-lavender">FITNESS SM</p>
-          <p className="text-xs font-bold text-[#75677f]">Strength in rhythm</p>
+          <p className="brand-wordmark text-sm font-black uppercase text-plum">FITNESS SM</p>
+          <p className="font-serif text-xs italic tracking-[0.14em] text-[#75677f]">Strength in rhythm</p>
         </div>
       )}
     </div>
@@ -332,18 +397,25 @@ const BrandMark = ({ size = "md", showName = false }: { size?: "sm" | "md" | "lg
 
 const SplashScreen = () => (
   <motion.div
-    className="splash-glow fixed inset-0 z-[80] flex flex-col items-center justify-center"
+    className="splash-glow fixed inset-0 z-[80] flex flex-col items-center justify-center px-8 text-center"
     initial={{ opacity: 1 }}
     exit={{ opacity: 0, scale: 1.02 }}
     transition={{ duration: 0.42, ease: [0.16, 1, 0.3, 1] }}
   >
-    <motion.div initial={{ scale: 0.88, y: 12, opacity: 0 }} animate={{ scale: 1, y: 0, opacity: 1 }} transition={{ type: "spring", stiffness: 220, damping: 24 }}>
+    <span className="splash-arc one" />
+    <span className="splash-arc two" />
+    <span className="splash-ribbon" />
+    {[18, 34, 55, 68, 82].map((left, index) => (
+      <span className="splash-particle" style={{ left: `${left}%`, top: `${18 + (index % 3) * 20}%` }} key={left} />
+    ))}
+    <motion.div className="splash-logo-wrap" initial={{ scale: 0.88, y: 16, opacity: 0 }} animate={{ scale: 1, y: 0, opacity: 1 }} transition={{ type: "spring", stiffness: 190, damping: 26 }}>
       <BrandMark size="lg" />
     </motion.div>
-    <motion.p className="brand-wordmark mt-7 text-sm font-black uppercase text-lavender" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.12 }}>
+    <motion.p className="brand-wordmark mt-8 text-lg font-black uppercase text-plum" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.18 }}>
       FITNESS SM
     </motion.p>
-    <motion.p className="mt-2 text-sm font-bold text-[#75677f]" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.22 }}>
+    <motion.div className="mt-3 h-px w-48 bg-gradient-to-r from-transparent via-lilac to-transparent" initial={{ opacity: 0, scaleX: 0.65 }} animate={{ opacity: 1, scaleX: 1 }} transition={{ delay: 0.3, duration: 0.6 }} />
+    <motion.p className="mt-3 font-serif text-base italic tracking-[0.18em] text-[#75677f]" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.38 }}>
       Strength in rhythm
     </motion.p>
   </motion.div>
@@ -382,41 +454,49 @@ const Header = ({ eyebrow, title, action }: { eyebrow: string; title: string; ac
 
 function Dashboard({
   data,
-  todayWorkout,
+  selectedDate,
+  selectedWorkout,
   startWorkout,
   setView,
+  openCalendar,
 }: {
   data: AppData;
-  todayWorkout: ProgramDay;
+  selectedDate: Date;
+  selectedWorkout?: ProgramDay;
   startWorkout: (day?: ProgramDay) => void;
   setView: (view: View) => void;
+  openCalendar: () => void;
 }) {
-  const weekSessions = sameWeekSessions(data.sessions);
+  const weekSessions = sameWeekSessions(data.sessions, selectedDate);
   const weeklyDone = new Set(weekSessions.map((session) => session.scheduledWeekday));
   const weeklyGoal = data.preferences.trainingDays.length;
   const weeklyVolume = weekSessions.reduce((total, session) => total + session.totalVolume, 0);
-  const consistency = Math.round((weeklyDone.size / weeklyGoal) * 100);
+  const consistency = weeklyGoal ? Math.round((weeklyDone.size / weeklyGoal) * 100) : 0;
   const bestStreak = calculateWeeklyStreak(data.sessions, data.preferences.trainingDays);
+  const isToday = isSameDate(selectedDate, new Date());
+  const isSaturday = weekdayName(selectedDate) === "Saturday";
+  const nextWorkout = nextWorkoutFromDate(data.program.days, selectedDate);
 
   return (
     <motion.div {...pageMotion}>
-      <TopGreeting />
-      <Header eyebrow="Good morning" title="Today" />
+      <TopGreeting openCalendar={openCalendar} />
+      <Header eyebrow={isToday ? "Good morning" : formatDisplayDate(selectedDate)} title={isToday ? "Today" : selectedDate.toLocaleDateString("en", { month: "short", day: "numeric" })} />
       <div className="grid gap-5">
+        {selectedWorkout ? (
         <Card className="relative overflow-hidden rounded-[34px] bg-gradient-to-br from-white via-[#fffaff] to-[#f4edff] p-6 md:p-7">
           <div className="absolute right-0 top-10 hidden h-64 w-64 rounded-full bg-lilac/20 md:block" />
           <div className="relative grid gap-6 md:grid-cols-[1fr_240px] md:items-center">
             <div>
               <span className="inline-flex items-center gap-2 rounded-full border border-silk bg-white/55 px-4 py-2 text-xs font-black uppercase text-lavender">
-                <img aria-hidden className="h-5 w-5 rounded-[28%]" src={brandIconSrc} alt="" /> Today's Workout
+                <img aria-hidden className="h-5 w-5 rounded-[28%]" src={brandIconSrc} alt="" /> {isToday ? "Today's Workout" : "Scheduled Workout"}
               </span>
-              <h2 className="lavender-script mt-5 max-w-lg text-5xl font-black leading-tight text-ink md:text-[56px]">{todayWorkout.title}</h2>
+              <h2 className="lavender-script mt-5 max-w-lg text-5xl font-black leading-tight text-ink md:text-[56px]">{selectedWorkout.title}</h2>
               <div className="mt-5 grid gap-3 text-base font-semibold text-[#75677f]">
                 <span className="flex items-center gap-3"><Timer className="text-lavender" size={20} /> Est. 60 min</span>
-                <span className="flex items-center gap-3"><Dumbbell className="text-lavender" size={20} /> {todayWorkout.exercises.length} Exercises</span>
+                <span className="flex items-center gap-3"><Dumbbell className="text-lavender" size={20} /> {selectedWorkout.exercises.length} Exercises</span>
                 <span className="flex items-center gap-3"><Heart className="text-lavender" size={20} /> Focus: Strength</span>
               </div>
-              <Button className="mt-6 h-14 w-full rounded-[24px] text-base md:max-w-md" onClick={() => startWorkout(todayWorkout)}>
+              <Button className="mt-6 h-14 w-full rounded-[24px] text-base md:max-w-md" onClick={() => startWorkout(selectedWorkout)}>
                 Start Workout <ArrowRight className="ml-auto" size={24} />
               </Button>
             </div>
@@ -427,11 +507,39 @@ function Dashboard({
             </div>
           </div>
         </Card>
+        ) : (
+        <Card className="relative overflow-hidden rounded-[34px] bg-gradient-to-br from-white via-[#fff7fb] to-[#f1ebff] p-6 md:p-7">
+          <span className="absolute -right-16 -top-20 h-64 w-64 rounded-full bg-lilac/25 blur-2xl" />
+          <div className="relative">
+            <span className="inline-flex items-center gap-2 rounded-full border border-silk bg-white/60 px-4 py-2 text-xs font-black uppercase text-lavender">
+              <Sparkles size={16} /> {isSaturday ? "Measurement Day" : "Recovery Day"}
+            </span>
+            <h2 className="lavender-script mt-5 max-w-2xl text-5xl font-black leading-tight text-ink md:text-[56px]">
+              {isSaturday ? "Soft check-in, strong rhythm." : "Recovery protects the progress."}
+            </h2>
+            <p className="mt-4 max-w-xl text-base font-semibold leading-7 text-[#75677f]">
+              {isSaturday
+                ? "No workout is scheduled today. Save measurements, review the week, and let your body absorb the work."
+                : nextWorkout
+                  ? `No workout is scheduled today. Your next ritual is ${nextWorkout.workout.title} on ${nextWorkout.date.toLocaleDateString("en", { weekday: "long" })}.`
+                  : "No workout is scheduled today. Keep the rhythm calm and intentional."}
+            </p>
+            <div className="mt-6 grid gap-3 sm:grid-cols-2">
+              <Button className="h-14 rounded-[24px] text-base" onClick={() => setView(isSaturday ? "measurements" : "progress")}>
+                {isSaturday ? "Save Measurements" : "View Progress"} <ArrowRight className="ml-auto" size={22} />
+              </Button>
+              <Button variant="soft" className="h-14 rounded-[24px] text-base" onClick={openCalendar}>
+                Open Calendar <Calendar size={20} />
+              </Button>
+            </div>
+          </div>
+        </Card>
+        )}
 
         <Card className="rounded-[30px] p-6">
           <div className="mb-5 flex items-center justify-between">
             <span className="flex items-center gap-2 text-sm font-black uppercase text-lavender"><Trophy size={18} /> Weekly Goal</span>
-            <button className="text-sm font-bold text-[#75677f]" type="button">View Details ›</button>
+            <button className="inline-flex items-center gap-1 text-sm font-bold text-[#75677f]" type="button" onClick={() => setView("progress")}>View Details <ArrowRight size={15} /></button>
           </div>
           <div className="grid gap-6 md:grid-cols-[220px_1fr] md:items-center">
             <div className="relative mx-auto flex h-44 w-44 items-center justify-center rounded-full bg-[conic-gradient(from_0deg,#b889ee_var(--goal),#f0eafd_0)] p-3" style={{ "--goal": `${consistency}%` } as React.CSSProperties}>
@@ -442,12 +550,12 @@ function Dashboard({
               </div>
             </div>
             <div>
-              <p className="mb-5 text-xl font-semibold text-[#75677f]">Keep going. You're on track.</p>
+              <p className="mb-5 text-xl font-semibold text-[#75677f]">{selectedWorkout ? "Keep going. You're on track." : "Rest days still count toward the rhythm."}</p>
               <div className="grid grid-cols-3 gap-4">
                 {data.preferences.trainingDays.map((day) => (
                   <div className="text-center" key={day}>
                     <div className={`mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-full text-xl font-black ${weeklyDone.has(day) ? "bg-mist text-lavender" : "border-2 border-dashed border-lilac/80 text-lavender"}`}>
-                      {weeklyDone.has(day) ? "✓" : <Dumbbell size={19} />}
+                      {weeklyDone.has(day) ? <Check size={22} /> : <Dumbbell size={19} />}
                     </div>
                     <p className="text-sm font-bold text-[#75677f]">{day.slice(0, 3)}</p>
                   </div>
@@ -478,14 +586,14 @@ function Dashboard({
   );
 }
 
-const TopGreeting = () => (
+const TopGreeting = ({ openCalendar }: { openCalendar: () => void }) => (
   <div className="mb-4 flex items-center justify-between">
-    <BrandMark size="lg" />
+    <BrandMark size="md" showName />
     <div className="flex gap-3">
-      <button className="flex h-16 w-16 items-center justify-center rounded-full bg-white/70 text-[#75677f] shadow-lavender ring-1 ring-white/80" type="button" aria-label="Calendar">
+      <button className="flex h-16 w-16 items-center justify-center rounded-full bg-white/70 text-[#75677f] shadow-lavender ring-1 ring-white/80" type="button" aria-label="Open calendar" onClick={openCalendar}>
         <Calendar size={25} />
       </button>
-      <button className="relative flex h-16 w-16 items-center justify-center rounded-full bg-white/70 text-[#75677f] shadow-lavender ring-1 ring-white/80" type="button" aria-label="Notifications">
+      <button className="relative flex h-16 w-16 items-center justify-center rounded-full bg-white/70 text-[#75677f] shadow-lavender ring-1 ring-white/80" type="button" aria-label="Motivation">
         <Sparkles size={25} />
         <span className="absolute right-3 top-3 h-3 w-3 rounded-full bg-blush" />
       </button>
@@ -594,7 +702,7 @@ function ActiveWorkout({
           <p className="brand-wordmark mt-1 text-[10px] font-black uppercase text-lavender">FITNESS SM</p>
         </div>
         <button className="flex h-12 w-12 items-center justify-center rounded-full bg-white/70 text-plum shadow-lavender" onClick={() => setRestSeconds(data.preferences.defaultRestSeconds)} type="button" aria-label="Start rest timer">
-          <Music2 size={22} />
+          <Timer size={22} />
         </button>
       </div>
 
@@ -672,17 +780,19 @@ const ExerciseLogger = ({
       </p>
       <div className="space-y-3">
         {exercise.sets.map((set) => (
-          <div className={`grid grid-cols-[34px_minmax(0,1fr)_48px] gap-2 rounded-[20px] border p-2.5 sm:grid-cols-[42px_1fr_1fr_48px] sm:items-center ${set.completed ? "border-[#c9eadb] bg-[#f1fff8]" : "border-silk bg-white/70"}`} key={set.id}>
-            <p className="text-center text-sm font-black text-plum">{set.setNumber}</p>
-            <div className="grid grid-cols-2 gap-2">
-              <NumberField value={set.weight} step={set.unit === "lb" ? 5 : 1} onChange={(value) => updateSet(exercise.id, set.id, { weight: value })} />
-              <NumberField value={set.reps} onChange={(value) => updateSet(exercise.id, set.id, { reps: value })} />
+          <div className={`grid grid-cols-[44px_minmax(0,1fr)_50px] gap-2 rounded-[22px] border p-3 sm:grid-cols-[54px_minmax(0,1fr)_minmax(0,1fr)_52px] sm:items-end ${set.completed ? "border-[#c9eadb] bg-[#f1fff8]" : "border-silk bg-white/70"}`} key={set.id}>
+            <div className="flex h-full min-h-12 flex-col items-center justify-center rounded-2xl bg-white/75 text-center">
+              <span className="text-[9px] font-black uppercase tracking-[0.1em] text-[#75677f]">Set</span>
+              <span className="text-base font-black text-plum">{set.setNumber}</span>
             </div>
-            <div className="hidden sm:block" />
+            <div className="grid grid-cols-2 gap-2 sm:contents">
+              <NumberField label={`Weight (${set.unit})`} unit={set.unit} value={set.weight} step={set.unit === "lb" ? 5 : 1} onChange={(value) => updateSet(exercise.id, set.id, { weight: value })} />
+              <NumberField label="Reps" value={set.reps} onChange={(value) => updateSet(exercise.id, set.id, { reps: value })} />
+            </div>
             <motion.button
               whileTap={{ scale: 0.92 }}
               aria-label={`Complete set ${set.setNumber}`}
-              className={`flex h-11 w-11 items-center justify-center rounded-2xl ${set.completed ? "bg-sage text-white" : "bg-mist text-lavender"}`}
+              className={`flex h-12 w-12 items-center justify-center self-end rounded-2xl ${set.completed ? "bg-sage text-white" : "bg-mist text-lavender"}`}
               onClick={() => updateSet(exercise.id, set.id, { completed: !set.completed, completedAt: !set.completed ? new Date().toISOString() : undefined })}
               type="button"
             >
@@ -1172,6 +1282,109 @@ const MiniVolumeChart = ({ sessions }: { sessions: WorkoutSession[] }) => {
   );
 };
 
+function CalendarSheet({
+  data,
+  selectedDate,
+  onSelectDate,
+  onClose,
+}: {
+  data: AppData;
+  selectedDate: Date;
+  onSelectDate: (date: Date) => void;
+  onClose: () => void;
+}) {
+  const [visibleMonth, setVisibleMonth] = useState(() => startOfMonth(selectedDate));
+  const monthLabel = visibleMonth.toLocaleDateString("en", { month: "long", year: "numeric" });
+  const first = startOfMonth(visibleMonth);
+  const gridStart = new Date(first);
+  gridStart.setDate(first.getDate() - first.getDay());
+  const days = Array.from({ length: 42 }, (_, index) => {
+    const date = new Date(gridStart);
+    date.setDate(gridStart.getDate() + index);
+    return date;
+  });
+  const completedDates = new Set(data.sessions.map((session) => dateKey(new Date(session.completedAt))));
+
+  const chooseDate = (date: Date) => {
+    onSelectDate(date);
+    setVisibleMonth(startOfMonth(date));
+    onClose();
+  };
+
+  return (
+    <motion.div className="fixed inset-0 z-[70] flex items-end bg-[#241b2f]/28 px-3 pb-3 backdrop-blur-sm md:items-center md:justify-center md:p-6" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+      <motion.div
+        className="glass max-h-[88vh] w-full max-w-lg overflow-hidden rounded-[34px] p-5"
+        initial={{ y: 34, opacity: 0, scale: 0.98 }}
+        animate={{ y: 0, opacity: 1, scale: 1 }}
+        exit={{ y: 24, opacity: 0, scale: 0.98 }}
+        transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
+      >
+        <div className="mb-5 flex items-center justify-between gap-3">
+          <div>
+            <p className="text-xs font-black uppercase tracking-[0.16em] text-lavender">Calendar</p>
+            <h2 className="mt-1 text-2xl font-black text-ink">{monthLabel}</h2>
+          </div>
+          <div className="flex items-center gap-2">
+            <button className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white/75 text-plum ring-1 ring-silk" type="button" aria-label="Previous month" onClick={() => setVisibleMonth((date) => addMonths(date, -1))}>
+              <ChevronLeft size={20} />
+            </button>
+            <button className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white/75 text-plum ring-1 ring-silk" type="button" aria-label="Next month" onClick={() => setVisibleMonth((date) => addMonths(date, 1))}>
+              <ChevronRight size={20} />
+            </button>
+            <button className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white/75 text-plum ring-1 ring-silk" type="button" aria-label="Close calendar" onClick={onClose}>
+              <X size={19} />
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-7 gap-1 pb-2 text-center text-[11px] font-black uppercase text-[#75677f]">
+          {weekdays.map((weekday) => <span key={weekday}>{weekday.slice(0, 3)}</span>)}
+        </div>
+        <AnimatePresence mode="wait">
+          <motion.div
+            className="grid grid-cols-7 gap-1.5"
+            key={dateKey(visibleMonth)}
+            initial={{ opacity: 0, x: 16 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -16 }}
+            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+          >
+            {days.map((date) => {
+              const key = dateKey(date);
+              const workout = findWorkoutForDate(data.program.days, date);
+              const selected = isSameDate(date, selectedDate);
+              const currentMonth = date.getMonth() === visibleMonth.getMonth();
+              const completed = completedDates.has(key);
+              const saturday = weekdayName(date) === "Saturday";
+              return (
+                <button
+                  className={`min-h-[58px] rounded-[18px] p-1.5 text-left transition ${selected ? "bg-lavender text-white shadow-glow" : currentMonth ? "bg-white/72 text-ink ring-1 ring-white/80" : "bg-white/35 text-[#aa9fb7]"} ${isSameDate(date, new Date()) && !selected ? "ring-2 ring-lilac" : ""}`}
+                  key={key}
+                  type="button"
+                  onClick={() => chooseDate(date)}
+                  aria-label={`${formatDisplayDate(date)}${workout ? `, ${workout.title}` : saturday ? ", measurement day" : ", recovery day"}`}
+                >
+                  <span className="block text-sm font-black">{date.getDate()}</span>
+                  <span className={`mt-1 block h-1.5 w-1.5 rounded-full ${completed ? "bg-sage" : workout ? selected ? "bg-white" : "bg-lavender" : saturday ? "bg-blush" : "bg-transparent"}`} />
+                  <span className={`mt-1 block truncate text-[9px] font-black uppercase ${selected ? "text-white/90" : "text-[#75677f]"}`}>
+                    {completed ? "Done" : workout ? "Lift" : saturday ? "Measure" : ""}
+                  </span>
+                </button>
+              );
+            })}
+          </motion.div>
+        </AnimatePresence>
+        <div className="mt-5 grid grid-cols-3 gap-2 text-center text-[11px] font-black uppercase text-[#75677f]">
+          <span className="rounded-full bg-white/65 px-2 py-2"><span className="mr-1 inline-block h-2 w-2 rounded-full bg-lavender" />Workout</span>
+          <span className="rounded-full bg-white/65 px-2 py-2"><span className="mr-1 inline-block h-2 w-2 rounded-full bg-blush" />Measure</span>
+          <span className="rounded-full bg-white/65 px-2 py-2"><span className="mr-1 inline-block h-2 w-2 rounded-full bg-sage" />Done</span>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
 const evaluateAchievements = (data: AppData, session: WorkoutSession) => {
   const earned = new Set<string>();
   const alreadyEarned = new Set(data.achievements.filter((item) => item.earnedAt).map((item) => item.id));
@@ -1207,3 +1420,4 @@ const calculateWeeklyStreak = (sessions: WorkoutSession[], trainingDays: Weekday
 };
 
 export default App;
+
