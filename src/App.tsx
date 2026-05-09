@@ -257,9 +257,9 @@ function App() {
     setView("workout");
   };
 
-  const finishWorkout = () => {
+  const finishWorkout = (durationOverrideSeconds?: number) => {
     if (!activeSession) return;
-    const durationSeconds = Math.max(60, Math.round((Date.now() - new Date(activeSession.startedAt).getTime()) / 1000));
+    const durationSeconds = Math.max(60, durationOverrideSeconds ?? Math.round((Date.now() - new Date(activeSession.startedAt).getTime()) / 1000));
     const draft = {
       ...activeSession,
       completedAt: new Date().toISOString(),
@@ -280,10 +280,20 @@ function App() {
     localStorage.removeItem(activeSessionKey);
   };
 
+  const cancelWorkout = () => {
+    if (!activeSession) return;
+    const shouldCancel = window.confirm("Cancel this workout draft? Logged sets from this session will be discarded.");
+    if (!shouldCancel) return;
+    setActiveSession(null);
+    setCompletedSession(null);
+    localStorage.removeItem(activeSessionKey);
+    setView("home");
+  };
+
   return (
     <div className="min-h-screen pb-28 text-[#241b2f] md:pb-10">
       <AnimatePresence>{showSplash && <SplashScreen />}</AnimatePresence>
-      <div className="mx-auto w-full max-w-5xl px-4 py-5 md:px-8 md:py-6">
+      <div className="mx-auto w-full max-w-5xl px-3 py-4 sm:px-4 sm:py-5 md:px-8 md:py-6">
         <main className="min-w-0 flex-1">
           <AnimatePresence mode="wait">
             {view === "home" && <Dashboard key="home" data={data} selectedDate={selectedDate} selectedWorkout={selectedWorkout} startWorkout={startWorkout} setView={setView} openCalendar={() => setCalendarOpen(true)} />}
@@ -296,6 +306,7 @@ function App() {
                 setActiveSession={setActiveSession}
                 startWorkout={startWorkout}
                 finishWorkout={finishWorkout}
+                cancelWorkout={cancelWorkout}
                 setCompletedSession={setCompletedSession}
                 updateData={updateData}
                 setView={setView}
@@ -608,6 +619,7 @@ function Workout({
   setActiveSession,
   startWorkout,
   finishWorkout,
+  cancelWorkout,
   setCompletedSession,
   updateData,
   setView,
@@ -617,7 +629,8 @@ function Workout({
   completedSession: WorkoutSession | null;
   setActiveSession: React.Dispatch<React.SetStateAction<ActiveSession | null>>;
   startWorkout: (day?: ProgramDay) => void;
-  finishWorkout: () => void;
+  finishWorkout: (durationOverrideSeconds?: number) => void;
+  cancelWorkout: () => void;
   setCompletedSession: (session: WorkoutSession | null) => void;
   updateData: (updater: (data: AppData) => AppData) => void;
   setView: (view: View) => void;
@@ -646,7 +659,7 @@ function Workout({
     );
   }
 
-  return <ActiveWorkout data={data} activeSession={activeSession} setActiveSession={setActiveSession} finishWorkout={finishWorkout} onBack={() => setView("home")} />;
+  return <ActiveWorkout data={data} activeSession={activeSession} setActiveSession={setActiveSession} finishWorkout={finishWorkout} cancelWorkout={cancelWorkout} onBack={() => setView("home")} />;
 }
 
 function ActiveWorkout({
@@ -654,27 +667,44 @@ function ActiveWorkout({
   activeSession,
   setActiveSession,
   finishWorkout,
+  cancelWorkout,
   onBack,
 }: {
   data: AppData;
   activeSession: ActiveSession;
   setActiveSession: React.Dispatch<React.SetStateAction<ActiveSession | null>>;
-  finishWorkout: () => void;
+  finishWorkout: (durationOverrideSeconds?: number) => void;
+  cancelWorkout: () => void;
   onBack: () => void;
 }) {
   const [elapsed, setElapsed] = useState(0);
   const [restSeconds, setRestSeconds] = useState(0);
+  const [isPaused, setIsPaused] = useState(false);
+  const [pausedStartedAt, setPausedStartedAt] = useState<number | null>(null);
+  const [pausedTotalMs, setPausedTotalMs] = useState(0);
   const previous = latestPreviousSession(data.sessions, activeSession.programDayId);
   const completedSets = activeSession.exercises.reduce((sum, exercise) => sum + exercise.sets.filter((set) => set.completed).length, 0);
   const totalSets = activeSession.exercises.reduce((sum, exercise) => sum + exercise.sets.length, 0);
 
   useEffect(() => {
     const interval = window.setInterval(() => {
-      setElapsed(Math.round((Date.now() - new Date(activeSession.startedAt).getTime()) / 1000));
+      if (isPaused) return;
+      setElapsed(Math.max(0, Math.round((Date.now() - new Date(activeSession.startedAt).getTime() - pausedTotalMs) / 1000)));
       setRestSeconds((value) => Math.max(0, value - 1));
     }, 1000);
     return () => window.clearInterval(interval);
-  }, [activeSession.startedAt]);
+  }, [activeSession.startedAt, isPaused, pausedTotalMs]);
+
+  const togglePause = () => {
+    if (isPaused) {
+      if (pausedStartedAt) setPausedTotalMs((total) => total + Date.now() - pausedStartedAt);
+      setPausedStartedAt(null);
+      setIsPaused(false);
+      return;
+    }
+    setPausedStartedAt(Date.now());
+    setIsPaused(true);
+  };
 
   const updateSet = (exerciseId: string, setId: string, patch: Partial<ActiveSession["exercises"][number]["sets"][number]>) => {
     setActiveSession((current) =>
@@ -692,35 +722,35 @@ function ActiveWorkout({
   };
 
   return (
-    <motion.div className="mx-auto max-w-3xl" {...pageMotion}>
-      <div className="mb-5 flex items-center justify-between px-1">
-        <button className="flex h-12 w-12 items-center justify-center rounded-full bg-white/70 text-plum shadow-lavender" onClick={onBack} type="button" aria-label="Return to dashboard">
+    <motion.div className="workout-screen mx-auto w-full max-w-3xl" {...pageMotion}>
+      <div className="mb-4 flex items-center justify-between gap-2 px-0 sm:px-1">
+        <button className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white/70 text-plum shadow-lavender sm:h-12 sm:w-12" onClick={onBack} type="button" aria-label="Return to dashboard">
           <ArrowLeft size={22} />
         </button>
-        <div className="text-center">
-          <h1 className="text-3xl font-black text-ink">Workout</h1>
+        <div className="min-w-0 text-center">
+          <h1 className="truncate text-2xl font-black text-ink sm:text-3xl">Workout</h1>
           <p className="brand-wordmark mt-1 text-[10px] font-black uppercase text-lavender">FITNESS SM</p>
         </div>
-        <button className="flex h-12 w-12 items-center justify-center rounded-full bg-white/70 text-plum shadow-lavender" onClick={() => setRestSeconds(data.preferences.defaultRestSeconds)} type="button" aria-label="Start rest timer">
+        <button className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white/70 text-plum shadow-lavender sm:h-12 sm:w-12" onClick={() => setRestSeconds(data.preferences.defaultRestSeconds)} type="button" aria-label="Start rest timer">
           <Timer size={22} />
         </button>
       </div>
 
-      <div className="glass sticky top-3 z-20 mb-5 rounded-[30px] p-5">
-        <div className="grid gap-4 sm:grid-cols-[1fr_1px_1fr] sm:items-center sm:gap-5">
-          <div className="flex items-center gap-4">
-            <div className="flex h-14 w-14 items-center justify-center rounded-full bg-mist text-lavender">
+      <div className="glass sticky top-2 z-20 mb-4 rounded-[26px] p-4 sm:top-3 sm:mb-5 sm:rounded-[30px] sm:p-5">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-[1fr_1px_1fr] sm:items-center sm:gap-5">
+          <div className="flex items-center gap-3 sm:gap-4">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-mist text-lavender sm:h-14 sm:w-14">
               <Dumbbell size={25} />
             </div>
             <div>
-              <p className="text-sm font-semibold text-[#75677f]">Workout Time</p>
-              <p className="text-3xl font-black text-ink sm:text-4xl">{formatDuration(elapsed)}</p>
+              <p className="text-xs font-black uppercase tracking-[0.1em] text-[#75677f] sm:text-sm sm:normal-case sm:tracking-normal">Time</p>
+              <p className="text-2xl font-black text-ink sm:text-4xl">{formatDuration(elapsed)}</p>
             </div>
           </div>
           <div className="hidden h-16 bg-silk sm:block" />
           <div>
-            <p className="text-sm font-semibold text-[#75677f]">Rest</p>
-            <p className="text-3xl font-black text-ink sm:text-4xl">{formatDuration(restSeconds)}</p>
+            <p className="text-xs font-black uppercase tracking-[0.1em] text-[#75677f] sm:text-sm sm:normal-case sm:tracking-normal">Rest</p>
+            <p className="text-2xl font-black text-ink sm:text-4xl">{formatDuration(restSeconds)}</p>
           </div>
         </div>
         <div className="mt-4 flex items-center gap-3">
@@ -730,6 +760,9 @@ function ActiveWorkout({
           <p className="text-xs font-black text-[#75677f]">{completedSets}/{totalSets}</p>
         </div>
         <div className="mt-4 flex gap-2 overflow-x-auto no-scrollbar">
+          <Button variant={isPaused ? "primary" : "soft"} className="shrink-0" onClick={togglePause}>
+            {isPaused ? <Play size={17} /> : <Timer size={17} />} {isPaused ? "Resume" : "Pause"}
+          </Button>
           <Button variant={restSeconds > 0 ? "primary" : "soft"} onClick={() => setRestSeconds(data.preferences.defaultRestSeconds)}>
             <Timer size={17} /> {restSeconds > 0 ? formatDuration(restSeconds) : "Rest 90s"}
           </Button>
@@ -744,9 +777,12 @@ function ActiveWorkout({
         ))}
       </div>
 
-      <div className="sticky bottom-24 z-30 mt-5 md:bottom-20">
-        <Button className="h-16 w-full rounded-[26px] text-lg" onClick={finishWorkout} disabled={completedSets === 0}>
-          Finish Workout <ArrowRight className="ml-auto" size={24} />
+      <div className="sticky bottom-24 z-30 mt-5 grid grid-cols-[0.9fr_1.6fr] gap-3 md:bottom-20">
+        <Button variant="danger" className="h-14 rounded-[24px] text-base" onClick={cancelWorkout}>
+          Cancel
+        </Button>
+        <Button className="h-14 rounded-[24px] text-base sm:h-16 sm:rounded-[26px] sm:text-lg" onClick={() => finishWorkout(elapsed)} disabled={completedSets === 0}>
+          Finish <ArrowRight className="ml-auto" size={22} />
         </Button>
       </div>
     </motion.div>
@@ -765,39 +801,41 @@ const ExerciseLogger = ({
   const completed = exercise.sets.filter((set) => set.completed).length;
   const previousVolume = previous?.sets.reduce((total, set) => total + set.weight * set.reps, 0) ?? 0;
   return (
-    <Card className="rounded-[32px] p-6">
-      <div className="mb-5 flex items-start justify-between gap-3">
-        <div>
-          <h2 className="text-2xl font-black leading-snug text-ink">{exercise.name}</h2>
-          <p className="mt-2 text-base font-bold text-[#75677f]">
+    <Card className="rounded-[26px] p-4 sm:rounded-[32px] sm:p-6">
+      <div className="mb-4 flex items-start justify-between gap-3 sm:mb-5">
+        <div className="min-w-0">
+          <h2 className="text-xl font-black leading-snug text-ink sm:text-2xl">{exercise.name}</h2>
+          <p className="mt-2 text-sm font-bold text-[#75677f] sm:text-base">
             Target {exercise.sets.length} x {exercise.targetReps === "failure" ? "failure" : exercise.targetReps}
           </p>
         </div>
-        <div className="rounded-full bg-mist px-4 py-3 text-sm font-black text-lavender">{completed}/{exercise.sets.length}</div>
+        <div className="shrink-0 rounded-full bg-mist px-3 py-2 text-sm font-black text-lavender sm:px-4 sm:py-3">{completed}/{exercise.sets.length}</div>
       </div>
-      <p className="mb-4 rounded-[22px] bg-[#fbf7ff] px-4 py-4 text-sm font-bold text-[#75677f]">
+      <p className="mb-4 rounded-[20px] bg-[#fbf7ff] px-3 py-3 text-sm font-bold text-[#75677f] sm:rounded-[22px] sm:px-4 sm:py-4">
         Previous: {previous ? `${Math.round(previousVolume).toLocaleString()} total volume` : "No previous session yet"}
       </p>
       <div className="space-y-3">
         {exercise.sets.map((set) => (
-          <div className={`grid grid-cols-[44px_minmax(0,1fr)_50px] gap-2 rounded-[22px] border p-3 sm:grid-cols-[54px_minmax(0,1fr)_minmax(0,1fr)_52px] sm:items-end ${set.completed ? "border-[#c9eadb] bg-[#f1fff8]" : "border-silk bg-white/70"}`} key={set.id}>
-            <div className="flex h-full min-h-12 flex-col items-center justify-center rounded-2xl bg-white/75 text-center">
-              <span className="text-[9px] font-black uppercase tracking-[0.1em] text-[#75677f]">Set</span>
-              <span className="text-base font-black text-plum">{set.setNumber}</span>
+          <div className={`rounded-[22px] border p-3 ${set.completed ? "border-[#c9eadb] bg-[#f1fff8]" : "border-silk bg-white/70"}`} key={set.id}>
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div className="inline-flex items-center gap-2 rounded-2xl bg-white/75 px-3 py-2">
+                <span className="text-[9px] font-black uppercase tracking-[0.1em] text-[#75677f]">Set</span>
+                <span className="text-base font-black text-plum">{set.setNumber}</span>
+              </div>
+              <motion.button
+                whileTap={{ scale: 0.92 }}
+                aria-label={`Complete set ${set.setNumber}`}
+                className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${set.completed ? "bg-sage text-white" : "bg-mist text-lavender"}`}
+                onClick={() => updateSet(exercise.id, set.id, { completed: !set.completed, completedAt: !set.completed ? new Date().toISOString() : undefined })}
+                type="button"
+              >
+                <Check size={18} />
+              </motion.button>
             </div>
-            <div className="grid grid-cols-2 gap-2 sm:contents">
+            <div className="grid grid-cols-2 gap-2.5">
               <NumberField label={`Weight (${set.unit})`} unit={set.unit} value={set.weight} step={set.unit === "lb" ? 5 : 1} onChange={(value) => updateSet(exercise.id, set.id, { weight: value })} />
               <NumberField label="Reps" value={set.reps} onChange={(value) => updateSet(exercise.id, set.id, { reps: value })} />
             </div>
-            <motion.button
-              whileTap={{ scale: 0.92 }}
-              aria-label={`Complete set ${set.setNumber}`}
-              className={`flex h-12 w-12 items-center justify-center self-end rounded-2xl ${set.completed ? "bg-sage text-white" : "bg-mist text-lavender"}`}
-              onClick={() => updateSet(exercise.id, set.id, { completed: !set.completed, completedAt: !set.completed ? new Date().toISOString() : undefined })}
-              type="button"
-            >
-              <Check size={18} />
-            </motion.button>
           </div>
         ))}
       </div>
