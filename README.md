@@ -89,3 +89,5 @@ sh.almarhoun@gmail.com
 ## Vercel Deployment
 
 This project includes `vercel.json`. Vite uses `/` as the base path on Vercel and keeps `/FitnessApp/` for the older GitHub Pages build path when not running on Vercel.
+
+Deployment trigger: Vercel should build every new push to `main`.
