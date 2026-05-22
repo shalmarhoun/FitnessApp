@@ -148,12 +148,14 @@ LocalStorage keys:
 - Main data: `feminineFitnessTracker.v1`
 - Active workout draft: `feminineFitnessTracker.activeSession.v1`
 
-Backup/import is mandatory because there is no backend.
+Backup/import remains available as a safety net even after Supabase sync.
 
 Supabase migration files added locally:
 - `src/lib/supabaseClient.ts`
 - `src/lib/cloudStore.ts`
 - `supabase/migrations/20260522180000_initial_fitness_sm_backend.sql`
+- `supabase/migrations/20260522200000_password_invite_accounts.sql`
+- `api/admin-users.js`
 - `.env.example`
 
 Owner email:
@@ -164,6 +166,8 @@ Current backend state:
 - When Supabase is configured and user signs in, app snapshots can sync to Supabase.
 - Completed workout sessions also sync to normalized workout tables.
 - Owner-only Permissions UI appears only for the owner account.
+- Authentication uses invitation-only email/password accounts; public sign-up is intentionally not shown.
+- Owner-created coach/viewer accounts are created through the Vercel serverless API using `SUPABASE_SERVICE_ROLE_KEY`.
 
 ## Current Quality Notes
 - Before saying done, build or verify when dependencies are available.
@@ -173,9 +177,9 @@ Current backend state:
 - For Vercel, confirm `VERCEL` build uses `/` base.
 - Supabase project: `ezvwkqnyhlczlkrnhuhv`.
 - Supabase project URL: `https://ezvwkqnyhlczlkrnhuhv.supabase.co`.
-- Applied migrations: `initial_fitness_sm_backend`, `revoke_security_definer_rpc_access`.
+- Applied migrations: `initial_fitness_sm_backend`, `revoke_security_definer_rpc_access`, `password_invite_accounts`.
 - Supabase security advisors were checked after migrations and returned no lints.
-- Current blockers from 2026-05-22: local `node.exe` returns `Access is denied`; GitHub write access is blocked by integration permissions; Vercel env vars still need to be added before cloud sync works in deployment.
+- Current blockers from 2026-05-22: local `node.exe` returns `Access is denied`; GitHub write access is blocked by integration permissions; Vercel env var `SUPABASE_SERVICE_ROLE_KEY` still needs to be added before owner-created accounts work in deployment.
 
 ## File Notes Rule
 At the start of future sessions:

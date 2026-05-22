@@ -11,7 +11,8 @@ A premium feminine fitness tracking web application for personal use.
 - Framer Motion
 - Recharts
 - LocalStorage fallback
-- Supabase-ready cloud sync
+- Supabase authentication and cloud sync
+- Vercel serverless owner account management
 - Vercel-ready deployment
 
 ## Features
@@ -28,10 +29,10 @@ A premium feminine fitness tracking web application for personal use.
 - Premium achievement system.
 - JSON export backup.
 - JSON import restore.
-- Optional Supabase authentication and cloud sync.
-- Owner-only permissions foundation for coach/viewer access.
+- Supabase email/password authentication with invitation-only access.
+- Owner-only permissions for coach/viewer accounts.
 - Calendar day history for previous workout logs.
-- No backend, database, authentication, or login.
+- Vercel serverless API for secure owner-created accounts.
 
 ## Run Locally
 
@@ -71,6 +72,8 @@ Create a Supabase project, then apply:
 
 ```txt
 supabase/migrations/20260522180000_initial_fitness_sm_backend.sql
+supabase/migrations/20260522183000_revoke_security_definer_rpc_access.sql
+supabase/migrations/20260522200000_password_invite_accounts.sql
 ```
 
 Set these environment variables in Vercel:
@@ -78,7 +81,10 @@ Set these environment variables in Vercel:
 ```txt
 VITE_SUPABASE_URL
 VITE_SUPABASE_ANON_KEY
+SUPABASE_SERVICE_ROLE_KEY
 ```
+
+`SUPABASE_SERVICE_ROLE_KEY` is server-only. Add it in Vercel Environment Variables and never expose it in frontend code.
 
 The owner email is:
 

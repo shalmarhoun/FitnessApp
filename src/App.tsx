@@ -14,6 +14,7 @@ import {
   Dumbbell,
   Edit3,
   Eye,
+  EyeOff,
   Flame,
   Heart,
   Home,
@@ -66,16 +67,17 @@ import {
 } from "./data";
 import type { ActiveSession, AppData, LoggedExercise, MeasurementEntry, ProgramDay, ProgramExercise, Weekday, WorkoutSession } from "./types";
 import {
-  createPermissionInvite,
+  createPasswordUser,
   emptyCloudState,
   getCurrentSession,
   isOwnerProfile,
   listPermissionInvites,
   loadCloudSnapshot,
   ownerEmail,
+  resetCloudPassword,
   saveCloudSnapshot,
   saveWorkoutSessionRows,
-  sendMagicLink,
+  signInWithPassword,
   signOutCloud,
   subscribeToAuth,
   upsertProfile,
@@ -1369,16 +1371,36 @@ function SettingsScreen({
 
 function CloudAccountCard({ cloud, setCloud, data }: { cloud: CloudState; setCloud: React.Dispatch<React.SetStateAction<CloudState>>; data: AppData }) {
   const [email, setEmail] = useState(ownerEmail);
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [busy, setBusy] = useState(false);
   const signedInEmail = cloud.user?.email ?? "";
 
   const signIn = async () => {
+    if (!email.trim() || !password) return;
     setBusy(true);
     try {
-      await sendMagicLink(email);
-      setCloud((current) => ({ ...current, status: "ready", message: "Magic link sent. Check your email to sign in." }));
+      await signInWithPassword(email, password);
+      setPassword("");
+      setCloud((current) => ({ ...current, status: "syncing", message: "Signed in. Syncing your cloud data." }));
     } catch (error) {
-      setCloud((current) => ({ ...current, status: "error", message: error instanceof Error ? error.message : "Unable to send sign-in link." }));
+      setCloud((current) => ({ ...current, status: "error", message: error instanceof Error ? error.message : "Unable to sign in." }));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const resetPassword = async () => {
+    if (!email.trim()) {
+      setCloud((current) => ({ ...current, status: "error", message: "Enter your email first." }));
+      return;
+    }
+    setBusy(true);
+    try {
+      await resetCloudPassword(email);
+      setCloud((current) => ({ ...current, status: "ready", message: "Password reset email sent." }));
+    } catch (error) {
+      setCloud((current) => ({ ...current, status: "error", message: error instanceof Error ? error.message : "Unable to send reset email." }));
     } finally {
       setBusy(false);
     }
@@ -1423,9 +1445,24 @@ function CloudAccountCard({ cloud, setCloud, data }: { cloud: CloudState; setClo
             Email
             <input className="h-12 rounded-2xl border border-silk bg-white/85 px-4 text-sm font-bold outline-none focus:ring-2 focus:ring-lilac" type="email" value={email} onChange={(event) => setEmail(event.target.value)} disabled={!cloud.configured || busy} />
           </label>
-          <Button onClick={signIn} disabled={!cloud.configured || busy}>
-            <LogIn size={17} /> Send Magic Link
+          <label className="grid gap-2 text-sm font-black text-ink">
+            Password
+            <div className="flex h-12 items-center rounded-2xl border border-silk bg-white/85 px-4 focus-within:ring-2 focus-within:ring-lilac">
+              <input className="min-w-0 flex-1 bg-transparent text-sm font-bold outline-none" type={showPassword ? "text" : "password"} value={password} onChange={(event) => setPassword(event.target.value)} disabled={!cloud.configured || busy} />
+              <button className="ml-2 rounded-full p-1 text-lavender" type="button" onClick={() => setShowPassword((value) => !value)} aria-label={showPassword ? "Hide password" : "Show password"}>
+                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
+            </div>
+          </label>
+          <Button onClick={signIn} disabled={!cloud.configured || busy || !email.trim() || !password}>
+            <LogIn size={17} /> Sign In
           </Button>
+          <button className="justify-self-start text-sm font-black text-lavender underline-offset-4 hover:underline disabled:opacity-50" type="button" onClick={resetPassword} disabled={!cloud.configured || busy || !email.trim()}>
+            Reset password
+          </button>
+          <p className="rounded-2xl bg-mist px-4 py-3 text-xs font-bold text-plum">
+            Accounts are invitation-only. There is no public sign up.
+          </p>
         </div>
       )}
       <p className="mt-3 text-xs font-semibold text-[#75677f]">Local backup still stays available. Current local sessions: {data.sessions.length}.</p>
@@ -1435,19 +1472,22 @@ function CloudAccountCard({ cloud, setCloud, data }: { cloud: CloudState; setClo
 
 function PermissionsCard({ cloud, setCloud }: { cloud: CloudState; setCloud: React.Dispatch<React.SetStateAction<CloudState>> }) {
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [role, setRole] = useState<"coach" | "viewer">("coach");
   const [busy, setBusy] = useState(false);
 
   const invite = async () => {
-    if (!cloud.user || !email.trim()) return;
+    if (!cloud.user || !email.trim() || !password) return;
     setBusy(true);
     try {
-      await createPermissionInvite(cloud.user.id, email, role);
+      await createPasswordUser(email, password, role);
       const permissions = await listPermissionInvites(cloud.user.id);
-      setCloud((current) => ({ ...current, permissions, status: "synced", message: "Permission invite saved." }));
+      setCloud((current) => ({ ...current, permissions, status: "synced", message: "Account created and permission saved." }));
       setEmail("");
+      setPassword("");
     } catch (error) {
-      setCloud((current) => ({ ...current, status: "error", message: error instanceof Error ? error.message : "Unable to save permission." }));
+      setCloud((current) => ({ ...current, status: "error", message: error instanceof Error ? error.message : "Unable to create account." }));
     } finally {
       setBusy(false);
     }
@@ -1460,8 +1500,17 @@ function PermissionsCard({ cloud, setCloud }: { cloud: CloudState; setCloud: Rea
       <p className="mt-2 text-sm font-semibold text-[#75677f]">Visible only to the owner account. Coaches can be allowed to view logs and edit programming.</p>
       <div className="mt-5 grid gap-3">
         <label className="grid gap-2 text-sm font-black text-ink">
-          Invite Email
+          User Email
           <input className="h-12 rounded-2xl border border-silk bg-white/85 px-4 text-sm font-bold outline-none focus:ring-2 focus:ring-lilac" type="email" placeholder="coach@example.com" value={email} onChange={(event) => setEmail(event.target.value)} />
+        </label>
+        <label className="grid gap-2 text-sm font-black text-ink">
+          Temporary Password
+          <div className="flex h-12 items-center rounded-2xl border border-silk bg-white/85 px-4 focus-within:ring-2 focus-within:ring-lilac">
+            <input className="min-w-0 flex-1 bg-transparent text-sm font-bold outline-none" type={showPassword ? "text" : "password"} placeholder="Minimum 6 characters" value={password} onChange={(event) => setPassword(event.target.value)} />
+            <button className="ml-2 rounded-full p-1 text-lavender" type="button" onClick={() => setShowPassword((value) => !value)} aria-label={showPassword ? "Hide password" : "Show password"}>
+              {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+            </button>
+          </div>
         </label>
         <div className="grid grid-cols-2 gap-2">
           {(["coach", "viewer"] as const).map((item) => (
@@ -1470,8 +1519,8 @@ function PermissionsCard({ cloud, setCloud }: { cloud: CloudState; setCloud: Rea
             </button>
           ))}
         </div>
-        <Button onClick={invite} disabled={busy || !email.trim()}>
-          <UserPlus size={17} /> Add Permission
+        <Button onClick={invite} disabled={busy || !email.trim() || password.length < 6}>
+          <UserPlus size={17} /> Create Account
         </Button>
       </div>
       <div className="mt-5 space-y-2">

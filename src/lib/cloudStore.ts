@@ -60,13 +60,19 @@ export const subscribeToAuth = (callback: (session: Session | null) => void) => 
   return () => data.subscription.unsubscribe();
 };
 
-export const sendMagicLink = async (email: string) => {
+export const signInWithPassword = async (email: string, password: string) => {
   if (!supabase) throw new Error("Supabase is not configured.");
-  const { error } = await supabase.auth.signInWithOtp({
-    email,
-    options: {
-      emailRedirectTo: window.location.origin,
-    },
+  const { error } = await supabase.auth.signInWithPassword({
+    email: email.toLowerCase().trim(),
+    password,
+  });
+  if (error) throw error;
+};
+
+export const resetCloudPassword = async (email: string) => {
+  if (!supabase) throw new Error("Supabase is not configured.");
+  const { error } = await supabase.auth.resetPasswordForEmail(email.toLowerCase().trim(), {
+    redirectTo: window.location.origin,
   });
   if (error) throw error;
 };
@@ -80,7 +86,19 @@ export const signOutCloud = async () => {
 export const upsertProfile = async (user: User) => {
   if (!supabase) return null;
   const email = user.email?.toLowerCase() ?? null;
-  const role: CloudRole = email === ownerEmail ? "owner" : "viewer";
+  const ownerRole = email === ownerEmail;
+
+  if (!ownerRole) {
+    const { data: existing, error: existingError } = await supabase
+      .from("profiles")
+      .select("id,email,display_name,role")
+      .eq("id", user.id)
+      .maybeSingle();
+    if (existingError) throw existingError;
+    if (existing) return existing as CloudProfile;
+  }
+
+  const role: CloudRole = ownerRole ? "owner" : "viewer";
   const { data, error } = await supabase
     .from("profiles")
     .upsert({ id: user.id, email, role }, { onConflict: "id" })
@@ -182,14 +200,43 @@ export const listPermissionInvites = async (ownerId: string) => {
 
 export const createPermissionInvite = async (ownerId: string, email: string, role: Exclude<CloudRole, "owner">) => {
   if (!supabase) throw new Error("Supabase is not configured.");
-  const { error } = await supabase.from("user_permissions").insert({
-    owner_id: ownerId,
-    email: email.toLowerCase().trim(),
-    role,
-    can_view_logs: true,
-    can_edit_program: role === "coach",
-    can_view_measurements: role === "coach",
-    can_add_notes: role === "coach",
-  });
+  const normalizedEmail = email.toLowerCase().trim();
+  const { data, error } = await supabase
+    .from("user_permissions")
+    .upsert(
+      {
+        owner_id: ownerId,
+        email: normalizedEmail,
+        role,
+        can_view_logs: true,
+        can_edit_program: role === "coach",
+        can_view_measurements: role === "coach",
+        can_add_notes: role === "coach",
+      },
+      { onConflict: "owner_id,email" },
+    )
+    .select("id,owner_id,email,role,can_view_logs,can_edit_program,can_view_measurements,can_add_notes,created_at")
+    .single();
   if (error) throw error;
+  return data as PermissionInvite;
+};
+
+export const createPasswordUser = async (email: string, password: string, role: Exclude<CloudRole, "owner">) => {
+  const session = await getCurrentSession();
+  const token = session?.access_token;
+  if (!token) throw new Error("Owner sign-in is required before adding users.");
+
+  const response = await fetch("/api/admin-users", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ email: email.toLowerCase().trim(), password, role }),
+  });
+
+  const payload = (await response.json().catch(() => null)) as { message?: string } | null;
+  if (!response.ok) {
+    throw new Error(payload?.message ?? "Unable to create account.");
+  }
 };
