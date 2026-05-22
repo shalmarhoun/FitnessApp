@@ -544,7 +544,7 @@ const SplashScreen = () => (
 );
 
 function AuthGate({ cloud, setCloud }: { cloud: CloudState; setCloud: React.Dispatch<React.SetStateAction<CloudState>> }) {
-  const [email, setEmail] = useState(ownerEmail);
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -1468,7 +1468,7 @@ function SettingsScreen({
 }
 
 function CloudAccountCard({ cloud, setCloud, data }: { cloud: CloudState; setCloud: React.Dispatch<React.SetStateAction<CloudState>>; data: AppData }) {
-  const [email, setEmail] = useState(ownerEmail);
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [busy, setBusy] = useState(false);
