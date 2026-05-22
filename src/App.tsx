@@ -12,19 +12,26 @@ import {
   ChevronUp,
   Download,
   Dumbbell,
+  Edit3,
+  Eye,
   Flame,
   Heart,
   Home,
+  LogIn,
+  LogOut,
   Play,
   Plus,
   RotateCcw,
   Ruler,
   Save,
   Settings,
+  ShieldCheck,
   Sparkles,
   Timer,
   Trophy,
   Upload,
+  UserPlus,
+  Users,
   X,
 } from "lucide-react";
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
@@ -58,6 +65,22 @@ import {
   weekdays,
 } from "./data";
 import type { ActiveSession, AppData, LoggedExercise, MeasurementEntry, ProgramDay, ProgramExercise, Weekday, WorkoutSession } from "./types";
+import {
+  createPermissionInvite,
+  emptyCloudState,
+  getCurrentSession,
+  isOwnerProfile,
+  listPermissionInvites,
+  loadCloudSnapshot,
+  ownerEmail,
+  saveCloudSnapshot,
+  saveWorkoutSessionRows,
+  sendMagicLink,
+  signOutCloud,
+  subscribeToAuth,
+  upsertProfile,
+  type CloudState,
+} from "./lib/cloudStore";
 
 type View = "home" | "workout" | "progress" | "measurements" | "settings";
 
@@ -71,6 +94,13 @@ const pageMotion = {
 const uid = () => crypto.randomUUID();
 const brandIconSrc = `${import.meta.env.BASE_URL}icons/icon-192.png`;
 const isSameDate = (a: Date, b: Date) => dateKey(a) === dateKey(b);
+const isBeforeToday = (date: Date) => {
+  const selected = new Date(date);
+  const today = new Date();
+  selected.setHours(0, 0, 0, 0);
+  today.setHours(0, 0, 0, 0);
+  return selected.getTime() < today.getTime();
+};
 const formatDisplayDate = (date: Date) => date.toLocaleDateString("en", { weekday: "long", month: "short", day: "numeric" });
 const startOfMonth = (date: Date) => new Date(date.getFullYear(), date.getMonth(), 1);
 const addMonths = (date: Date, amount: number) => new Date(date.getFullYear(), date.getMonth() + amount, 1);
@@ -191,8 +221,68 @@ function App() {
   const [activeSession, setActiveSession] = useState<ActiveSession | null>(() => loadActiveSession());
   const [completedSession, setCompletedSession] = useState<WorkoutSession | null>(null);
   const [showSplash, setShowSplash] = useState(() => !sessionStorage.getItem("fitnessSmSplashSeen"));
+  const [cloud, setCloud] = useState<CloudState>(emptyCloudState);
+  const cloudSaveTimer = useRef<number | null>(null);
 
   useEffect(() => saveData(data), [data]);
+
+  useEffect(() => {
+    let mounted = true;
+    const hydrate = async () => {
+      try {
+        const session = await getCurrentSession();
+        if (!mounted || !session?.user) {
+          if (mounted) setCloud((current) => ({ ...current, session, user: session?.user ?? null, status: session ? "ready" : current.configured ? "ready" : "offline" }));
+          return;
+        }
+        setCloud((current) => ({ ...current, session, user: session.user, status: "syncing", message: "Connecting cloud profile..." }));
+        const profile = await upsertProfile(session.user);
+        const snapshot = await loadCloudSnapshot(session.user.id);
+        if (!mounted) return;
+        if (snapshot?.app_data?.meta) {
+          const cloudTime = new Date(snapshot.app_data.meta.updatedAt).getTime();
+          const localTime = new Date(data.meta.updatedAt).getTime();
+          if (cloudTime > localTime) setData(snapshot.app_data);
+          else await saveCloudSnapshot(session.user.id, data);
+        } else {
+          await saveCloudSnapshot(session.user.id, data);
+        }
+        const permissions = profile && isOwnerProfile(profile, session.user) ? await listPermissionInvites(session.user.id) : [];
+        if (!mounted) return;
+        setCloud({ configured: true, session, user: session.user, profile, permissions, status: "synced", message: "Cloud sync is active." });
+      } catch (error) {
+        if (!mounted) return;
+        setCloud((current) => ({ ...current, status: "error", message: error instanceof Error ? error.message : "Unable to connect to Supabase." }));
+      }
+    };
+    hydrate();
+    const unsubscribe = subscribeToAuth((session) => {
+      if (!mounted) return;
+      setCloud((current) => ({ ...current, session, user: session?.user ?? null, profile: session ? current.profile : null, permissions: session ? current.permissions : [], status: session ? "syncing" : current.configured ? "ready" : "offline" }));
+      hydrate();
+    });
+    return () => {
+      mounted = false;
+      unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!cloud.user || !cloud.configured) return;
+    if (cloudSaveTimer.current) window.clearTimeout(cloudSaveTimer.current);
+    cloudSaveTimer.current = window.setTimeout(async () => {
+      try {
+        setCloud((current) => ({ ...current, status: "syncing", message: "Saving to Supabase..." }));
+        await saveCloudSnapshot(cloud.user!.id, data);
+        setCloud((current) => ({ ...current, status: "synced", message: "Saved to Supabase." }));
+      } catch (error) {
+        setCloud((current) => ({ ...current, status: "error", message: error instanceof Error ? error.message : "Cloud save failed." }));
+      }
+    }, 900);
+    return () => {
+      if (cloudSaveTimer.current) window.clearTimeout(cloudSaveTimer.current);
+    };
+  }, [data, cloud.user?.id, cloud.configured]);
 
   useEffect(() => {
     if (!showSplash) return;
@@ -275,6 +365,11 @@ function App() {
       sessions: [session, ...current.sessions],
       achievements: current.achievements.map((achievement) => (earned.includes(achievement.id) && !achievement.earnedAt ? { ...achievement, earnedAt: session.completedAt } : achievement)),
     }));
+    if (cloud.user) {
+      saveWorkoutSessionRows(cloud.user.id, session).catch((error) => {
+        setCloud((current) => ({ ...current, status: "error", message: error instanceof Error ? error.message : "Workout saved locally, but Supabase row sync failed." }));
+      });
+    }
     setCompletedSession(session);
     setActiveSession(null);
     localStorage.removeItem(activeSessionKey);
@@ -314,7 +409,7 @@ function App() {
             )}
             {view === "progress" && <Progress key="progress" data={data} />}
             {view === "measurements" && <Measurements key="measurements" data={data} updateData={updateData} />}
-            {view === "settings" && <SettingsScreen key="settings" data={data} updateData={updateData} setData={setData} />}
+            {view === "settings" && <SettingsScreen key="settings" data={data} updateData={updateData} setData={setData} cloud={cloud} setCloud={setCloud} />}
           </AnimatePresence>
         </main>
       </div>
@@ -485,15 +580,30 @@ function Dashboard({
   const consistency = weeklyGoal ? Math.round((weeklyDone.size / weeklyGoal) * 100) : 0;
   const bestStreak = calculateWeeklyStreak(data.sessions, data.preferences.trainingDays);
   const isToday = isSameDate(selectedDate, new Date());
+  const isPast = isBeforeToday(selectedDate);
   const isSaturday = weekdayName(selectedDate) === "Saturday";
   const nextWorkout = nextWorkoutFromDate(data.program.days, selectedDate);
+  const selectedDateSessions = data.sessions.filter((session) => dateKey(new Date(session.completedAt)) === dateKey(selectedDate));
+  const showHistory = isPast && selectedDateSessions.length > 0;
 
   return (
     <motion.div {...pageMotion}>
       <TopGreeting openCalendar={openCalendar} />
       <Header eyebrow={isToday ? "Good morning" : formatDisplayDate(selectedDate)} title={isToday ? "Today" : selectedDate.toLocaleDateString("en", { month: "short", day: "numeric" })} />
       <div className="grid gap-5">
-        {selectedWorkout ? (
+        {showHistory ? (
+          <DayHistoryCard date={selectedDate} sessions={selectedDateSessions} />
+        ) : isPast ? (
+          <Card className="relative overflow-hidden rounded-[34px] bg-gradient-to-br from-white via-[#fff7fb] to-[#f1ebff] p-6 md:p-7">
+            <span className="inline-flex items-center gap-2 rounded-full border border-silk bg-white/60 px-4 py-2 text-xs font-black uppercase text-lavender">
+              <Calendar size={16} /> History
+            </span>
+            <h2 className="lavender-script mt-5 max-w-2xl text-5xl font-black leading-tight text-ink md:text-[56px]">No workout logged.</h2>
+            <p className="mt-4 max-w-xl text-base font-semibold leading-7 text-[#75677f]">
+              {selectedWorkout ? `${selectedWorkout.title} was scheduled for this day, but no completed session was saved.` : "This was a recovery day with no completed session."}
+            </p>
+          </Card>
+        ) : selectedWorkout ? (
         <Card className="relative overflow-hidden rounded-[34px] bg-gradient-to-br from-white via-[#fffaff] to-[#f4edff] p-6 md:p-7">
           <div className="absolute right-0 top-10 hidden h-64 w-64 rounded-full bg-lilac/20 md:block" />
           <div className="relative grid gap-6 md:grid-cols-[1fr_240px] md:items-center">
@@ -596,6 +706,68 @@ function Dashboard({
     </motion.div>
   );
 }
+
+const DayHistoryCard = ({ date, sessions }: { date: Date; sessions: WorkoutSession[] }) => {
+  const totalVolume = sessions.reduce((sum, session) => sum + session.totalVolume, 0);
+  const totalSets = sessions.reduce((sum, session) => sum + session.exercises.reduce((exerciseSum, exercise) => exerciseSum + exercise.sets.filter((set) => set.completed).length, 0), 0);
+  return (
+    <Card className="relative overflow-hidden rounded-[34px] bg-gradient-to-br from-white via-[#fffaff] to-[#f4edff] p-5 md:p-7">
+      <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <span className="inline-flex items-center gap-2 rounded-full border border-silk bg-white/60 px-4 py-2 text-xs font-black uppercase text-lavender">
+            <Calendar size={16} /> Workout History
+          </span>
+          <h2 className="lavender-script mt-5 text-4xl font-black leading-tight text-ink md:text-[52px]">{formatDisplayDate(date)}</h2>
+          <p className="mt-2 text-sm font-semibold text-[#75677f]">Saved performance from this day.</p>
+        </div>
+        <div className="grid grid-cols-2 gap-2 text-center">
+          <div className="rounded-[22px] bg-white/75 px-4 py-3 ring-1 ring-silk">
+            <p className="text-xs font-black uppercase text-[#75677f]">Volume</p>
+            <p className="text-xl font-black text-ink">{Math.round(totalVolume).toLocaleString()}</p>
+          </div>
+          <div className="rounded-[22px] bg-white/75 px-4 py-3 ring-1 ring-silk">
+            <p className="text-xs font-black uppercase text-[#75677f]">Sets</p>
+            <p className="text-xl font-black text-ink">{totalSets}</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        {sessions.map((session) => (
+          <div className="rounded-[26px] border border-silk bg-white/70 p-4" key={session.id}>
+            <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h3 className="text-2xl font-black text-ink">{session.title}</h3>
+                <p className="mt-1 text-sm font-bold text-[#75677f]">
+                  {formatDuration(session.durationSeconds)} / {session.estimatedCalories} cal / {session.mood ?? "No mood"}
+                </p>
+              </div>
+              <span className="rounded-full bg-mist px-3 py-2 text-xs font-black text-lavender">{session.scheduledWeekday}</span>
+            </div>
+            <div className="space-y-3">
+              {session.exercises.map((exercise) => (
+                <div className="rounded-[22px] bg-[#fbf7ff] p-3" key={exercise.id}>
+                  <p className="text-sm font-black text-ink">{exercise.name}</p>
+                  <div className="mt-3 grid gap-2">
+                    {exercise.sets.map((set) => (
+                      <div className="grid grid-cols-[44px_1fr_1fr_42px] items-center gap-2 rounded-2xl bg-white/75 px-3 py-2 text-sm font-black" key={set.id}>
+                        <span className="text-[#75677f]">#{set.setNumber}</span>
+                        <span>{set.weight} <span className="text-[10px] uppercase text-lavender">{set.unit}</span></span>
+                        <span>{set.reps} <span className="text-[10px] uppercase text-lavender">reps</span></span>
+                        <span className={`text-right ${set.completed ? "text-sage" : "text-[#a93f5b]"}`}>{set.completed ? "Done" : "Skip"}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+            {session.notes && <p className="mt-4 rounded-[20px] bg-white/75 p-3 text-sm font-semibold text-[#75677f]">Notes: {session.notes}</p>}
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+};
 
 const TopGreeting = ({ openCalendar }: { openCalendar: () => void }) => (
   <div className="mb-4 flex items-center justify-between">
@@ -1089,12 +1261,18 @@ function SettingsScreen({
   data,
   updateData,
   setData,
+  cloud,
+  setCloud,
 }: {
   data: AppData;
   updateData: (updater: (data: AppData) => AppData) => void;
   setData: (data: AppData) => void;
+  cloud: CloudState;
+  setCloud: React.Dispatch<React.SetStateAction<CloudState>>;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
+  const [showPermissions, setShowPermissions] = useState(false);
+  const ownerSignedIn = isOwnerProfile(cloud.profile, cloud.user);
 
   const exportBackup = () => {
     const backup = {
@@ -1146,6 +1324,18 @@ function SettingsScreen({
       <div className="grid gap-5 xl:grid-cols-[1.2fr_0.8fr]">
         <ProgramEditor data={data} updateData={updateData} />
         <div className="space-y-5">
+          <CloudAccountCard cloud={cloud} setCloud={setCloud} data={data} />
+          {ownerSignedIn && (
+            <Card className="bg-gradient-to-br from-white via-[#fffaff] to-[#f4edff]">
+              <p className="flex items-center gap-2 text-xs font-black uppercase text-lavender"><ShieldCheck size={16} /> Owner Control</p>
+              <h2 className="mt-1 text-xl font-black text-ink">Private permissions area.</h2>
+              <p className="mt-2 text-sm font-semibold text-[#75677f]">Only the owner account can see this control.</p>
+              <Button className="mt-5 w-full" onClick={() => setShowPermissions((value) => !value)}>
+                <Users size={17} /> {showPermissions ? "Hide Permissions" : "Open Permissions"}
+              </Button>
+            </Card>
+          )}
+          {ownerSignedIn && showPermissions && <PermissionsCard cloud={cloud} setCloud={setCloud} />}
           <Card>
             <p className="text-xs font-black uppercase text-[#75677f]">Backup</p>
             <h2 className="mt-1 text-xl font-black text-ink">Your data stays yours.</h2>
@@ -1174,6 +1364,138 @@ function SettingsScreen({
         </div>
       </div>
     </motion.div>
+  );
+}
+
+function CloudAccountCard({ cloud, setCloud, data }: { cloud: CloudState; setCloud: React.Dispatch<React.SetStateAction<CloudState>>; data: AppData }) {
+  const [email, setEmail] = useState(ownerEmail);
+  const [busy, setBusy] = useState(false);
+  const signedInEmail = cloud.user?.email ?? "";
+
+  const signIn = async () => {
+    setBusy(true);
+    try {
+      await sendMagicLink(email);
+      setCloud((current) => ({ ...current, status: "ready", message: "Magic link sent. Check your email to sign in." }));
+    } catch (error) {
+      setCloud((current) => ({ ...current, status: "error", message: error instanceof Error ? error.message : "Unable to send sign-in link." }));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const signOut = async () => {
+    setBusy(true);
+    try {
+      await signOutCloud();
+      setCloud((current) => ({ ...current, session: null, user: null, profile: null, permissions: [], status: current.configured ? "ready" : "offline", message: "Signed out." }));
+    } catch (error) {
+      setCloud((current) => ({ ...current, status: "error", message: error instanceof Error ? error.message : "Unable to sign out." }));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card>
+      <p className="text-xs font-black uppercase text-[#75677f]">Cloud Account</p>
+      <h2 className="mt-1 text-xl font-black text-ink">Supabase sync and authentication.</h2>
+      <p className="mt-2 text-sm font-semibold text-[#75677f]">
+        {cloud.configured ? "Sign in to save workouts, program edits, measurements, and achievements to Supabase." : "Supabase is not configured yet. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in Vercel to enable cloud sync."}
+      </p>
+      <div className={`mt-4 rounded-2xl px-4 py-3 text-sm font-bold ${cloud.status === "error" ? "bg-[#fff0f4] text-[#a93f5b]" : cloud.status === "synced" ? "bg-[#ecfff6] text-[#3f8d70]" : "bg-mist text-plum"}`}>
+        {cloud.message ?? (cloud.configured ? "Cloud is ready." : "Local-only mode is active.")}
+      </div>
+      {cloud.user ? (
+        <div className="mt-5 grid gap-3">
+          <div className="rounded-[22px] bg-white/75 p-4 ring-1 ring-silk">
+            <p className="text-xs font-black uppercase text-[#75677f]">Signed in</p>
+            <p className="mt-1 text-sm font-black text-ink">{signedInEmail}</p>
+            <p className="mt-1 text-xs font-bold uppercase text-lavender">{cloud.profile?.role ?? "viewer"}</p>
+          </div>
+          <Button variant="soft" onClick={signOut} disabled={busy}>
+            <LogOut size={17} /> Sign Out
+          </Button>
+        </div>
+      ) : (
+        <div className="mt-5 grid gap-3">
+          <label className="grid gap-2 text-sm font-black text-ink">
+            Email
+            <input className="h-12 rounded-2xl border border-silk bg-white/85 px-4 text-sm font-bold outline-none focus:ring-2 focus:ring-lilac" type="email" value={email} onChange={(event) => setEmail(event.target.value)} disabled={!cloud.configured || busy} />
+          </label>
+          <Button onClick={signIn} disabled={!cloud.configured || busy}>
+            <LogIn size={17} /> Send Magic Link
+          </Button>
+        </div>
+      )}
+      <p className="mt-3 text-xs font-semibold text-[#75677f]">Local backup still stays available. Current local sessions: {data.sessions.length}.</p>
+    </Card>
+  );
+}
+
+function PermissionsCard({ cloud, setCloud }: { cloud: CloudState; setCloud: React.Dispatch<React.SetStateAction<CloudState>> }) {
+  const [email, setEmail] = useState("");
+  const [role, setRole] = useState<"coach" | "viewer">("coach");
+  const [busy, setBusy] = useState(false);
+
+  const invite = async () => {
+    if (!cloud.user || !email.trim()) return;
+    setBusy(true);
+    try {
+      await createPermissionInvite(cloud.user.id, email, role);
+      const permissions = await listPermissionInvites(cloud.user.id);
+      setCloud((current) => ({ ...current, permissions, status: "synced", message: "Permission invite saved." }));
+      setEmail("");
+    } catch (error) {
+      setCloud((current) => ({ ...current, status: "error", message: error instanceof Error ? error.message : "Unable to save permission." }));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card className="bg-gradient-to-br from-white via-[#fffaff] to-[#f4edff]">
+      <p className="flex items-center gap-2 text-xs font-black uppercase text-lavender"><ShieldCheck size={16} /> Owner Permissions</p>
+      <h2 className="mt-1 text-xl font-black text-ink">Invite support without giving away control.</h2>
+      <p className="mt-2 text-sm font-semibold text-[#75677f]">Visible only to the owner account. Coaches can be allowed to view logs and edit programming.</p>
+      <div className="mt-5 grid gap-3">
+        <label className="grid gap-2 text-sm font-black text-ink">
+          Invite Email
+          <input className="h-12 rounded-2xl border border-silk bg-white/85 px-4 text-sm font-bold outline-none focus:ring-2 focus:ring-lilac" type="email" placeholder="coach@example.com" value={email} onChange={(event) => setEmail(event.target.value)} />
+        </label>
+        <div className="grid grid-cols-2 gap-2">
+          {(["coach", "viewer"] as const).map((item) => (
+            <button className={`rounded-2xl px-3 py-3 text-sm font-black capitalize ${role === item ? "bg-lavender text-white shadow-glow" : "bg-white/75 text-plum ring-1 ring-silk"}`} key={item} type="button" onClick={() => setRole(item)}>
+              {item}
+            </button>
+          ))}
+        </div>
+        <Button onClick={invite} disabled={busy || !email.trim()}>
+          <UserPlus size={17} /> Add Permission
+        </Button>
+      </div>
+      <div className="mt-5 space-y-2">
+        {cloud.permissions.length ? (
+          cloud.permissions.map((permission) => (
+            <div className="rounded-[20px] bg-white/75 p-3 ring-1 ring-silk" key={permission.id}>
+              <div className="flex items-center justify-between gap-3">
+                <p className="min-w-0 truncate text-sm font-black text-ink">{permission.email}</p>
+                <span className="rounded-full bg-mist px-3 py-1 text-xs font-black uppercase text-lavender">{permission.role}</span>
+              </div>
+              <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-black uppercase text-[#75677f]">
+                {permission.can_view_logs && <span className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1"><Eye size={12} /> Logs</span>}
+                {permission.can_edit_program && <span className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1"><Edit3 size={12} /> Program</span>}
+                {permission.can_view_measurements && <span className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1"><Ruler size={12} /> Measures</span>}
+              </div>
+            </div>
+          ))
+        ) : (
+          <div className="rounded-[20px] bg-white/65 p-4 text-sm font-bold text-[#75677f]">
+            <Users className="mb-2 text-lavender" size={20} /> No invited people yet.
+          </div>
+        )}
+      </div>
+    </Card>
   );
 }
 
