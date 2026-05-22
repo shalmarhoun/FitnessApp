@@ -171,7 +171,11 @@ Current backend state:
 - For visual changes, use the in-app browser and test mobile dimensions when relevant.
 - For GitHub Pages, always confirm `/FitnessApp/` asset base.
 - For Vercel, confirm `VERCEL` build uses `/` base.
-- Current blockers from 2026-05-22: local `node.exe` returns `Access is denied`; GitHub write access is blocked by integration permissions; Supabase project ID is not yet available in workspace.
+- Supabase project: `ezvwkqnyhlczlkrnhuhv`.
+- Supabase project URL: `https://ezvwkqnyhlczlkrnhuhv.supabase.co`.
+- Applied migrations: `initial_fitness_sm_backend`, `revoke_security_definer_rpc_access`.
+- Supabase security advisors were checked after migrations and returned no lints.
+- Current blockers from 2026-05-22: local `node.exe` returns `Access is denied`; GitHub write access is blocked by integration permissions; Vercel env vars still need to be added before cloud sync works in deployment.
 
 ## File Notes Rule
 At the start of future sessions:

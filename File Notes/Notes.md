@@ -44,8 +44,26 @@ Completed locally:
 Blocked:
 - Local build verification is blocked because `node.exe` returns `Access is denied` in this Codex environment.
 - GitHub push is blocked because the GitHub integration returned `Resource not accessible by integration` when trying to create branch `codex/supabase-vercel-auth`.
-- Supabase migration has not been applied because no Supabase `project_id` is available in this workspace.
 - Vercel deployment is not completed because the Vercel tool instructed to use CLI/git integration and did not deploy directly.
+
+Completed after owner provided Supabase project details:
+- Applied migration `initial_fitness_sm_backend` to project `ezvwkqnyhlczlkrnhuhv`.
+- Applied migration `revoke_security_definer_rpc_access`.
+- Verified public tables exist:
+  - `profiles`
+  - `app_snapshots`
+  - `user_permissions`
+  - `workout_sessions`
+  - `logged_exercises`
+  - `logged_sets`
+- Ran Supabase security advisors; result has no lints.
+
+Still pending:
+- Add Vercel environment variables:
+  - `VITE_SUPABASE_URL`
+  - `VITE_SUPABASE_ANON_KEY`
+- Redeploy on Vercel after next push.
+- Test magic-link login with `sh.almarhoun@gmail.com`.
 
 ## Done
 

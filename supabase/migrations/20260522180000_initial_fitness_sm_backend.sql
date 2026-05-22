@@ -174,14 +174,25 @@ drop policy if exists "profiles_upsert_self" on public.profiles;
 create policy "profiles_upsert_self"
 on public.profiles for insert
 to authenticated
-with check (id = (select auth.uid()));
+with check (
+  id = (select auth.uid())
+  and lower(coalesce(email, '')) = lower(coalesce((auth.jwt() ->> 'email'), ''))
+  and role = case
+    when lower(coalesce((auth.jwt() ->> 'email'), '')) = 'sh.almarhoun@gmail.com' then 'owner'::public.app_role
+    else 'viewer'::public.app_role
+  end
+);
 
 drop policy if exists "profiles_update_self" on public.profiles;
 create policy "profiles_update_self"
 on public.profiles for update
 to authenticated
 using (id = (select auth.uid()))
-with check (id = (select auth.uid()));
+with check (
+  id = (select auth.uid())
+  and lower(coalesce(email, '')) = lower(coalesce((auth.jwt() ->> 'email'), ''))
+  and role = (select current_profile.role from public.profiles current_profile where current_profile.id = (select auth.uid()))
+);
 
 drop policy if exists "snapshots_owner_or_permitted_select" on public.app_snapshots;
 create policy "snapshots_owner_or_permitted_select"
@@ -241,4 +252,3 @@ on public.logged_sets for all
 to authenticated
 using (public.is_owner(owner_id))
 with check (public.is_owner(owner_id));
-
