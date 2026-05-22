@@ -2,6 +2,8 @@ import type { Session, User } from "@supabase/supabase-js";
 import type { AppData, WorkoutSession } from "../types";
 import { isSupabaseConfigured, ownerEmail, supabase } from "./supabaseClient";
 
+export { ownerEmail } from "./supabaseClient";
+
 export type CloudRole = "owner" | "coach" | "viewer";
 
 export type CloudProfile = {
