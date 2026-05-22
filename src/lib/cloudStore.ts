@@ -11,6 +11,7 @@ export type CloudProfile = {
   email: string | null;
   display_name: string | null;
   role: CloudRole;
+  assigned_owner_id?: string | null;
 };
 
 export type PermissionInvite = {
@@ -30,6 +31,7 @@ export type CloudState = {
   session: Session | null;
   user: User | null;
   profile: CloudProfile | null;
+  ownerId: string | null;
   permissions: PermissionInvite[];
   status: "offline" | "ready" | "syncing" | "synced" | "error";
   message?: string;
@@ -40,12 +42,19 @@ export const emptyCloudState: CloudState = {
   session: null,
   user: null,
   profile: null,
+  ownerId: null,
   permissions: [],
   status: isSupabaseConfigured ? "ready" : "offline",
 };
 
 export const isOwnerProfile = (profile: CloudProfile | null, user: User | null) =>
   profile?.role === "owner" || user?.email?.toLowerCase() === ownerEmail;
+
+export const canEditProgram = (profile: CloudProfile | null, user: User | null) =>
+  isOwnerProfile(profile, user) || profile?.role === "coach";
+
+export const getCloudOwnerId = (profile: CloudProfile | null, user: User | null) =>
+  isOwnerProfile(profile, user) ? user?.id ?? null : profile?.assigned_owner_id ?? null;
 
 export const getCurrentSession = async () => {
   if (!supabase) return null;
@@ -91,7 +100,7 @@ export const upsertProfile = async (user: User) => {
   if (!ownerRole) {
     const { data: existing, error: existingError } = await supabase
       .from("profiles")
-      .select("id,email,display_name,role")
+      .select("id,email,display_name,role,assigned_owner_id")
       .eq("id", user.id)
       .maybeSingle();
     if (existingError) throw existingError;
@@ -102,7 +111,7 @@ export const upsertProfile = async (user: User) => {
   const { data, error } = await supabase
     .from("profiles")
     .upsert({ id: user.id, email, role }, { onConflict: "id" })
-    .select("id,email,display_name,role")
+    .select("id,email,display_name,role,assigned_owner_id")
     .single();
   if (error) throw error;
   return data as CloudProfile;

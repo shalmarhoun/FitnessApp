@@ -74,6 +74,7 @@ Create a Supabase project, then apply:
 supabase/migrations/20260522180000_initial_fitness_sm_backend.sql
 supabase/migrations/20260522183000_revoke_security_definer_rpc_access.sql
 supabase/migrations/20260522200000_password_invite_accounts.sql
+supabase/migrations/20260522203000_role_based_app_access.sql
 ```
 
 Set these environment variables in Vercel:

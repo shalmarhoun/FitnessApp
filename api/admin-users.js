@@ -99,7 +99,7 @@ export default async function handler(request, response) {
   const { error: profileError } = await serviceClient.from("profiles").upsert(
     [
       { id: owner.id, email: owner.email?.toLowerCase(), role: "owner" },
-      { id: invitedUser.id, email: normalizedEmail, role: normalizedRole },
+      { id: invitedUser.id, email: normalizedEmail, role: normalizedRole, assigned_owner_id: owner.id },
     ],
     { onConflict: "id" },
   );

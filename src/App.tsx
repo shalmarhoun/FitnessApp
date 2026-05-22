@@ -68,8 +68,10 @@ import {
 import type { ActiveSession, AppData, LoggedExercise, MeasurementEntry, ProgramDay, ProgramExercise, Weekday, WorkoutSession } from "./types";
 import {
   createPasswordUser,
+  canEditProgram,
   emptyCloudState,
   getCurrentSession,
+  getCloudOwnerId,
   isOwnerProfile,
   listPermissionInvites,
   loadCloudSnapshot,
@@ -239,19 +241,20 @@ function App() {
         }
         setCloud((current) => ({ ...current, session, user: session.user, status: "syncing", message: "Connecting cloud profile..." }));
         const profile = await upsertProfile(session.user);
-        const snapshot = await loadCloudSnapshot(session.user.id);
+        const ownerId = getCloudOwnerId(profile, session.user) ?? session.user.id;
+        const snapshot = await loadCloudSnapshot(ownerId);
         if (!mounted) return;
         if (snapshot?.app_data?.meta) {
           const cloudTime = new Date(snapshot.app_data.meta.updatedAt).getTime();
           const localTime = new Date(data.meta.updatedAt).getTime();
           if (cloudTime > localTime) setData(snapshot.app_data);
-          else await saveCloudSnapshot(session.user.id, data);
+          else if (canEditProgram(profile, session.user)) await saveCloudSnapshot(ownerId, data);
         } else {
-          await saveCloudSnapshot(session.user.id, data);
+          if (canEditProgram(profile, session.user)) await saveCloudSnapshot(ownerId, data);
         }
         const permissions = profile && isOwnerProfile(profile, session.user) ? await listPermissionInvites(session.user.id) : [];
         if (!mounted) return;
-        setCloud({ configured: true, session, user: session.user, profile, permissions, status: "synced", message: "Cloud sync is active." });
+        setCloud({ configured: true, session, user: session.user, profile, ownerId, permissions, status: "synced", message: "Cloud sync is active." });
       } catch (error) {
         if (!mounted) return;
         setCloud((current) => ({ ...current, status: "error", message: error instanceof Error ? error.message : "Unable to connect to Supabase." }));
@@ -260,7 +263,7 @@ function App() {
     hydrate();
     const unsubscribe = subscribeToAuth((session) => {
       if (!mounted) return;
-      setCloud((current) => ({ ...current, session, user: session?.user ?? null, profile: session ? current.profile : null, permissions: session ? current.permissions : [], status: session ? "syncing" : current.configured ? "ready" : "offline" }));
+      setCloud((current) => ({ ...current, session, user: session?.user ?? null, profile: session ? current.profile : null, ownerId: session ? current.ownerId : null, permissions: session ? current.permissions : [], status: session ? "syncing" : current.configured ? "ready" : "offline" }));
       hydrate();
     });
     return () => {
@@ -270,12 +273,12 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!cloud.user || !cloud.configured) return;
+    if (!cloud.user || !cloud.ownerId || !cloud.configured || !canEditProgram(cloud.profile, cloud.user)) return;
     if (cloudSaveTimer.current) window.clearTimeout(cloudSaveTimer.current);
     cloudSaveTimer.current = window.setTimeout(async () => {
       try {
         setCloud((current) => ({ ...current, status: "syncing", message: "Saving to Supabase..." }));
-        await saveCloudSnapshot(cloud.user!.id, data);
+        await saveCloudSnapshot(cloud.ownerId!, data);
         setCloud((current) => ({ ...current, status: "synced", message: "Saved to Supabase." }));
       } catch (error) {
         setCloud((current) => ({ ...current, status: "error", message: error instanceof Error ? error.message : "Cloud save failed." }));
@@ -284,7 +287,7 @@ function App() {
     return () => {
       if (cloudSaveTimer.current) window.clearTimeout(cloudSaveTimer.current);
     };
-  }, [data, cloud.user?.id, cloud.configured]);
+  }, [data, cloud.user?.id, cloud.ownerId, cloud.profile?.role, cloud.configured]);
 
   useEffect(() => {
     if (!showSplash) return;
@@ -367,8 +370,8 @@ function App() {
       sessions: [session, ...current.sessions],
       achievements: current.achievements.map((achievement) => (earned.includes(achievement.id) && !achievement.earnedAt ? { ...achievement, earnedAt: session.completedAt } : achievement)),
     }));
-    if (cloud.user) {
-      saveWorkoutSessionRows(cloud.user.id, session).catch((error) => {
+    if (cloud.ownerId && canEditProgram(cloud.profile, cloud.user)) {
+      saveWorkoutSessionRows(cloud.ownerId, session).catch((error) => {
         setCloud((current) => ({ ...current, status: "error", message: error instanceof Error ? error.message : "Workout saved locally, but Supabase row sync failed." }));
       });
     }
@@ -387,45 +390,56 @@ function App() {
     setView("home");
   };
 
+  const authenticated = Boolean(cloud.user && cloud.profile && cloud.ownerId);
+  const editableProgram = canEditProgram(cloud.profile, cloud.user);
+
   return (
     <div className="min-h-screen pb-28 text-[#241b2f] md:pb-10">
       <AnimatePresence>{showSplash && <SplashScreen />}</AnimatePresence>
-      <div className="mx-auto w-full max-w-5xl px-3 py-4 sm:px-4 sm:py-5 md:px-8 md:py-6">
-        <main className="min-w-0 flex-1">
-          <AnimatePresence mode="wait">
-            {view === "home" && <Dashboard key="home" data={data} selectedDate={selectedDate} selectedWorkout={selectedWorkout} startWorkout={startWorkout} setView={setView} openCalendar={() => setCalendarOpen(true)} />}
-            {view === "workout" && (
-              <Workout
-                key="workout"
-                data={data}
-                activeSession={activeSession}
-                completedSession={completedSession}
-                setActiveSession={setActiveSession}
-                startWorkout={startWorkout}
-                finishWorkout={finishWorkout}
-                cancelWorkout={cancelWorkout}
-                setCompletedSession={setCompletedSession}
-                updateData={updateData}
-                setView={setView}
-              />
-            )}
-            {view === "progress" && <Progress key="progress" data={data} />}
-            {view === "measurements" && <Measurements key="measurements" data={data} updateData={updateData} />}
-            {view === "settings" && <SettingsScreen key="settings" data={data} updateData={updateData} setData={setData} cloud={cloud} setCloud={setCloud} />}
-          </AnimatePresence>
-        </main>
-      </div>
-      <MobileNav view={view} setView={setView} startWorkout={() => actualTodayWorkout ? startWorkout(actualTodayWorkout) : setView("measurements")} hasActiveSession={Boolean(activeSession)} hasTodayWorkout={Boolean(actualTodayWorkout)} />
-      <AnimatePresence>
-        {calendarOpen && (
-          <CalendarSheet
-            data={data}
-            selectedDate={selectedDate}
-            onSelectDate={setSelectedDate}
-            onClose={() => setCalendarOpen(false)}
-          />
-        )}
-      </AnimatePresence>
+      {!showSplash && !authenticated ? (
+        <AuthGate cloud={cloud} setCloud={setCloud} />
+      ) : (
+        authenticated && (
+          <>
+            <div className="mx-auto w-full max-w-5xl px-3 py-4 sm:px-4 sm:py-5 md:px-8 md:py-6">
+              <main className="min-w-0 flex-1">
+                <AnimatePresence mode="wait">
+                  {view === "home" && <Dashboard key="home" data={data} selectedDate={selectedDate} selectedWorkout={selectedWorkout} startWorkout={startWorkout} setView={setView} openCalendar={() => setCalendarOpen(true)} />}
+                  {view === "workout" && (
+                    <Workout
+                      key="workout"
+                      data={data}
+                      activeSession={activeSession}
+                      completedSession={completedSession}
+                      setActiveSession={setActiveSession}
+                      startWorkout={startWorkout}
+                      finishWorkout={finishWorkout}
+                      cancelWorkout={cancelWorkout}
+                      setCompletedSession={setCompletedSession}
+                      updateData={updateData}
+                      setView={setView}
+                    />
+                  )}
+                  {view === "progress" && <Progress key="progress" data={data} />}
+                  {view === "measurements" && <Measurements key="measurements" data={data} updateData={updateData} />}
+                  {view === "settings" && <SettingsScreen key="settings" data={data} updateData={updateData} setData={setData} cloud={cloud} setCloud={setCloud} canEditProgram={editableProgram} />}
+                </AnimatePresence>
+              </main>
+            </div>
+            <MobileNav view={view} setView={setView} startWorkout={() => actualTodayWorkout ? startWorkout(actualTodayWorkout) : setView("measurements")} hasActiveSession={Boolean(activeSession)} hasTodayWorkout={Boolean(actualTodayWorkout)} />
+            <AnimatePresence>
+              {calendarOpen && (
+                <CalendarSheet
+                  data={data}
+                  selectedDate={selectedDate}
+                  onSelectDate={setSelectedDate}
+                  onClose={() => setCalendarOpen(false)}
+                />
+              )}
+            </AnimatePresence>
+          </>
+        )
+      )}
     </div>
   );
 }
@@ -528,6 +542,80 @@ const SplashScreen = () => (
     </motion.p>
   </motion.div>
 );
+
+function AuthGate({ cloud, setCloud }: { cloud: CloudState; setCloud: React.Dispatch<React.SetStateAction<CloudState>> }) {
+  const [email, setEmail] = useState(ownerEmail);
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const signIn = async () => {
+    if (!email.trim() || !password) return;
+    setBusy(true);
+    try {
+      await signInWithPassword(email, password);
+      setPassword("");
+      setCloud((current) => ({ ...current, status: "syncing", message: "Signing in..." }));
+    } catch (error) {
+      setCloud((current) => ({ ...current, status: "error", message: error instanceof Error ? error.message : "Unable to sign in." }));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const resetPassword = async () => {
+    if (!email.trim()) {
+      setCloud((current) => ({ ...current, status: "error", message: "Enter your email first." }));
+      return;
+    }
+    setBusy(true);
+    try {
+      await resetCloudPassword(email);
+      setCloud((current) => ({ ...current, status: "ready", message: "Password reset email sent." }));
+    } catch (error) {
+      setCloud((current) => ({ ...current, status: "error", message: error instanceof Error ? error.message : "Unable to send reset email." }));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <motion.main className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center px-5 py-10" {...pageMotion}>
+      <div className="mb-8 flex justify-center">
+        <BrandMark size="lg" />
+      </div>
+      <Card className="rounded-[34px] bg-gradient-to-br from-white via-[#fffaff] to-[#f4edff] p-6 shadow-lavender">
+        <p className="text-xs font-black uppercase text-lavender">FITNESS SM</p>
+        <h1 className="mt-2 text-3xl font-black text-ink">Sign in to continue.</h1>
+        <p className="mt-2 text-sm font-semibold text-[#75677f]">Private training access only. Accounts are created by the owner.</p>
+        <div className={`mt-5 rounded-2xl px-4 py-3 text-sm font-bold ${cloud.status === "error" ? "bg-[#fff0f4] text-[#a93f5b]" : "bg-mist text-plum"}`}>
+          {cloud.message ?? (cloud.configured ? "Enter your email and password." : "Supabase is not configured yet.")}
+        </div>
+        <div className="mt-5 grid gap-3">
+          <label className="grid gap-2 text-sm font-black text-ink">
+            Email
+            <input className="h-12 rounded-2xl border border-silk bg-white/85 px-4 text-sm font-bold outline-none focus:ring-2 focus:ring-lilac" type="email" value={email} onChange={(event) => setEmail(event.target.value)} disabled={!cloud.configured || busy} />
+          </label>
+          <label className="grid gap-2 text-sm font-black text-ink">
+            Password
+            <div className="flex h-12 items-center rounded-2xl border border-silk bg-white/85 px-4 focus-within:ring-2 focus-within:ring-lilac">
+              <input className="min-w-0 flex-1 bg-transparent text-sm font-bold outline-none" type={showPassword ? "text" : "password"} value={password} onChange={(event) => setPassword(event.target.value)} disabled={!cloud.configured || busy} />
+              <button className="ml-2 rounded-full p-1 text-lavender" type="button" onClick={() => setShowPassword((value) => !value)} aria-label={showPassword ? "Hide password" : "Show password"}>
+                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
+            </div>
+          </label>
+          <Button onClick={signIn} disabled={!cloud.configured || busy || !email.trim() || !password}>
+            <LogIn size={17} /> Sign In
+          </Button>
+          <button className="justify-self-start text-sm font-black text-lavender underline-offset-4 hover:underline disabled:opacity-50" type="button" onClick={resetPassword} disabled={!cloud.configured || busy || !email.trim()}>
+            Reset password
+          </button>
+        </div>
+      </Card>
+    </motion.main>
+  );
+}
 
 const DesktopNav = ({ view, setView }: { view: View; setView: (view: View) => void }) => (
   <aside className="glass sticky top-8 hidden h-[calc(100vh-4rem)] w-64 shrink-0 rounded-[28px] p-5 md:block">
@@ -1265,12 +1353,14 @@ function SettingsScreen({
   setData,
   cloud,
   setCloud,
+  canEditProgram,
 }: {
   data: AppData;
   updateData: (updater: (data: AppData) => AppData) => void;
   setData: (data: AppData) => void;
   cloud: CloudState;
   setCloud: React.Dispatch<React.SetStateAction<CloudState>>;
+  canEditProgram: boolean;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [showPermissions, setShowPermissions] = useState(false);
@@ -1324,7 +1414,15 @@ function SettingsScreen({
     <motion.div {...pageMotion}>
       <Header eyebrow="FITNESS SM" title="Program, backups, and preferences." action={<BrandMark size="md" />} />
       <div className="grid gap-5 xl:grid-cols-[1.2fr_0.8fr]">
-        <ProgramEditor data={data} updateData={updateData} />
+        {canEditProgram ? (
+          <ProgramEditor data={data} updateData={updateData} />
+        ) : (
+          <Card>
+            <p className="text-xs font-black uppercase text-[#75677f]">Program</p>
+            <h2 className="mt-1 text-xl font-black text-ink">Viewer access is read-only.</h2>
+            <p className="mt-2 text-sm font-semibold text-[#75677f]">Ask the owner for coach access if you need to edit the training program.</p>
+          </Card>
+        )}
         <div className="space-y-5">
           <CloudAccountCard cloud={cloud} setCloud={setCloud} data={data} />
           {ownerSignedIn && (
@@ -1410,7 +1508,7 @@ function CloudAccountCard({ cloud, setCloud, data }: { cloud: CloudState; setClo
     setBusy(true);
     try {
       await signOutCloud();
-      setCloud((current) => ({ ...current, session: null, user: null, profile: null, permissions: [], status: current.configured ? "ready" : "offline", message: "Signed out." }));
+      setCloud((current) => ({ ...current, session: null, user: null, profile: null, ownerId: null, permissions: [], status: current.configured ? "ready" : "offline", message: "Signed out." }));
     } catch (error) {
       setCloud((current) => ({ ...current, status: "error", message: error instanceof Error ? error.message : "Unable to sign out." }));
     } finally {

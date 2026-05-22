@@ -155,6 +155,7 @@ Supabase migration files added locally:
 - `src/lib/cloudStore.ts`
 - `supabase/migrations/20260522180000_initial_fitness_sm_backend.sql`
 - `supabase/migrations/20260522200000_password_invite_accounts.sql`
+- `supabase/migrations/20260522203000_role_based_app_access.sql`
 - `api/admin-users.js`
 - `.env.example`
 
@@ -168,6 +169,8 @@ Current backend state:
 - Owner-only Permissions UI appears only for the owner account.
 - Authentication uses invitation-only email/password accounts; public sign-up is intentionally not shown.
 - Owner-created coach/viewer accounts are created through the Vercel serverless API using `SUPABASE_SERVICE_ROLE_KEY`.
+- The app is gated: splash screen first, then login screen; app screens render only after a valid Supabase session/profile.
+- Coach accounts load the owner's cloud snapshot and can edit the program; viewer accounts are read-only in Settings.
 
 ## Current Quality Notes
 - Before saying done, build or verify when dependencies are available.
@@ -177,7 +180,7 @@ Current backend state:
 - For Vercel, confirm `VERCEL` build uses `/` base.
 - Supabase project: `ezvwkqnyhlczlkrnhuhv`.
 - Supabase project URL: `https://ezvwkqnyhlczlkrnhuhv.supabase.co`.
-- Applied migrations: `initial_fitness_sm_backend`, `revoke_security_definer_rpc_access`, `password_invite_accounts`.
+- Applied migrations: `initial_fitness_sm_backend`, `revoke_security_definer_rpc_access`, `password_invite_accounts`, `role_based_app_access`.
 - Supabase security advisors were checked after migrations and returned no lints.
 - Current blockers from 2026-05-22: local `node.exe` returns `Access is denied`; GitHub write access is blocked by integration permissions; Vercel env var `SUPABASE_SERVICE_ROLE_KEY` still needs to be added before owner-created accounts work in deployment.
 
