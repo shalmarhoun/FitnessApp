@@ -426,6 +426,7 @@ function App() {
   const authenticated = Boolean(cloud.user && cloud.profile && cloud.ownerId && !cloud.profile.disabled_at);
   const editableProgram = canEditProgram(cloud.profile, cloud.user);
   const ownerSignedIn = isOwnerProfile(cloud.profile, cloud.user);
+  const inbodyEnabled = canUploadInBody(cloud.profile, cloud.user);
 
   return (
     <div className="min-h-screen pb-28 text-[#241b2f] md:pb-10">
@@ -456,7 +457,7 @@ function App() {
                     />
                   )}
                   {view === "progress" && <Progress key="progress" data={data} />}
-                  {view === "measurements" && <Measurements key="measurements" data={data} updateData={ownerSignedIn ? updateData : () => undefined} />}
+                  {view === "measurements" && <Measurements key="measurements" data={data} updateData={ownerSignedIn || inbodyEnabled ? updateData : () => undefined} cloud={cloud} canUploadInBody={inbodyEnabled} />}
                   {view === "settings" && <SettingsScreen key="settings" data={data} updateData={updateData} setData={setData} cloud={cloud} setCloud={setCloud} canEditProgram={editableProgram} />}
                 </AnimatePresence>
               </main>
@@ -1333,7 +1334,17 @@ const ChartCard = ({ title, subtitle, children }: { title: string; subtitle: str
   </Card>
 );
 
-function Measurements({ data, updateData }: { data: AppData; updateData: (updater: (data: AppData) => AppData) => void }) {
+function Measurements({
+  data,
+  updateData,
+  cloud,
+  canUploadInBody,
+}: {
+  data: AppData;
+  updateData: (updater: (data: AppData) => AppData) => void;
+  cloud: CloudState;
+  canUploadInBody: boolean;
+}) {
   const isSaturday = weekdayName() === "Saturday";
   const [entry, setEntry] = useState<MeasurementEntry>({
     id: uid(),
@@ -1383,19 +1394,22 @@ function Measurements({ data, updateData }: { data: AppData; updateData: (update
             <Save size={17} /> Save Measurements
           </Button>
         </Card>
-        <ChartCard title="Measurement Trends" subtitle="Weekly progress over time.">
-          <ResponsiveContainer width="100%" height={340}>
-            <LineChart data={[...data.measurements].reverse().map((item) => ({ name: new Date(item.date).toLocaleDateString("en", { month: "short", day: "numeric" }), weight: item.bodyWeight, waist: item.waist, hips: item.hips }))}>
-              <CartesianGrid stroke="#E9E1F5" vertical={false} />
-              <XAxis dataKey="name" tick={{ fill: "#75677f", fontSize: 12 }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fill: "#75677f", fontSize: 12 }} axisLine={false} tickLine={false} />
-              <Tooltip contentStyle={{ borderRadius: 16, borderColor: "#E8DEFF" }} />
-              <Line dataKey="weight" stroke="#8F6FE8" strokeWidth={3} />
-              <Line dataKey="waist" stroke="#F5C8D7" strokeWidth={3} />
-              <Line dataKey="hips" stroke="#A8C7B5" strokeWidth={3} />
-            </LineChart>
-          </ResponsiveContainer>
-        </ChartCard>
+        <div className="grid gap-5">
+          <ChartCard title="Measurement Trends" subtitle="Weekly progress over time.">
+            <ResponsiveContainer width="100%" height={340}>
+              <LineChart data={[...data.measurements].reverse().map((item) => ({ name: new Date(item.date).toLocaleDateString("en", { month: "short", day: "numeric" }), weight: item.bodyWeight, waist: item.waist, hips: item.hips }))}>
+                <CartesianGrid stroke="#E9E1F5" vertical={false} />
+                <XAxis dataKey="name" tick={{ fill: "#75677f", fontSize: 12 }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fill: "#75677f", fontSize: 12 }} axisLine={false} tickLine={false} />
+                <Tooltip contentStyle={{ borderRadius: 16, borderColor: "#E8DEFF" }} />
+                <Line dataKey="weight" stroke="#8F6FE8" strokeWidth={3} />
+                <Line dataKey="waist" stroke="#F5C8D7" strokeWidth={3} />
+                <Line dataKey="hips" stroke="#A8C7B5" strokeWidth={3} />
+              </LineChart>
+            </ResponsiveContainer>
+          </ChartCard>
+          <InBodyIntelligenceCard data={data} updateData={updateData} cloud={cloud} canUpload={canUploadInBody} />
+        </div>
       </div>
     </motion.div>
   );
@@ -1420,7 +1434,6 @@ function SettingsScreen({
   const [showPermissions, setShowPermissions] = useState(false);
   const ownerSignedIn = isOwnerProfile(cloud.profile, cloud.user);
   const userManagementEnabled = canManageUsers(cloud.profile, cloud.user);
-  const inbodyEnabled = canUploadInBody(cloud.profile, cloud.user);
   const aiManagementEnabled = canManageAI(cloud.profile, cloud.user);
 
   const exportBackup = () => {
@@ -1497,8 +1510,6 @@ function SettingsScreen({
             </Card>
           )}
           {userManagementEnabled && showPermissions && <PermissionsCard cloud={cloud} setCloud={setCloud} />}
-          <SettingsSectionTitle title="InBody Intelligence" description="Upload reports, preserve files, and chart body composition history." />
-          <InBodyIntelligenceCard data={data} updateData={updateData} cloud={cloud} canUpload={inbodyEnabled} />
           <SettingsSectionTitle title="AI Reports & Privacy" description="Owner-private critique stays hidden from coach and viewer roles." />
           <AIPrivacyCard data={data} updateData={updateData} ownerPrivate={ownerSignedIn} canManage={aiManagementEnabled} />
           <SettingsSectionTitle title="Backup & Export" description="Manual JSON safety net remains available." />
@@ -1721,6 +1732,9 @@ const previousInBodyReport = (reports: InBodyReport[], report: InBodyReport) =>
     .sort((a, b) => new Date(b.reportDate).getTime() - new Date(a.reportDate).getTime())[0] ??
   [...reports].filter((item) => item.id !== report.id).sort((a, b) => new Date(b.reportDate).getTime() - new Date(a.reportDate).getTime())[0];
 
+const hasInBodyMetrics = (report: InBodyReport) =>
+  [report.weight, report.skeletalMuscleMass, report.bodyFatPercentage, report.bodyFatMass, report.bmi, report.metabolicRate].some((value) => typeof value === "number" && Number.isFinite(value));
+
 function InBodyIntelligenceCard({
   data,
   updateData,
@@ -1754,14 +1768,15 @@ function InBodyIntelligenceCard({
     metabolicRate: "",
     notes: "",
   });
-  const sorted = [...(data.inbodyReports ?? [])].sort((a, b) => new Date(a.reportDate).getTime() - new Date(b.reportDate).getTime());
-  const chartData = sorted.map((report) => ({
+  const sortedAscending = [...(data.inbodyReports ?? [])].sort((a, b) => new Date(a.reportDate).getTime() - new Date(b.reportDate).getTime());
+  const sortedReports = [...(data.inbodyReports ?? [])].sort((a, b) => new Date(b.reportDate).getTime() - new Date(a.reportDate).getTime() || new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime());
+  const chartData = sortedAscending.map((report) => ({
     date: new Date(report.reportDate).toLocaleDateString("en", { month: "short", day: "numeric" }),
     weight: report.weight,
     bodyFat: report.bodyFatPercentage,
     muscle: report.skeletalMuscleMass,
   }));
-  const latestReport = [...(data.inbodyReports ?? [])].sort((a, b) => new Date(b.reportDate).getTime() - new Date(a.reportDate).getTime())[0];
+  const latestReport = sortedReports.find(hasInBodyMetrics) ?? sortedReports[0];
   const latestAnalysis =
     (latestReport ? (data.aiReports ?? []).find((report) => report.reportType === "inbody" && report.sourceIds.includes(latestReport.id)) : undefined) ??
     (latestReport ? createInBodyAnalysis(latestReport, previousInBodyReport(data.inbodyReports ?? [], latestReport)) : undefined);
@@ -1930,7 +1945,11 @@ function InBodyIntelligenceCard({
         </div>
       )}
       <div className="mt-4 space-y-2">
-        {(data.inbodyReports ?? []).slice(0, 3).map((report) => (
+        {sortedReports.slice(0, 5).map((report) => {
+          const reportAnalysis =
+            (data.aiReports ?? []).find((item) => item.reportType === "inbody" && item.sourceIds.includes(report.id)) ??
+            (hasInBodyMetrics(report) ? createInBodyAnalysis(report, previousInBodyReport(data.inbodyReports ?? [], report)) : undefined);
+          return (
           <div className="rounded-2xl bg-white/75 p-3 ring-1 ring-silk" key={report.id}>
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
@@ -1974,12 +1993,27 @@ function InBodyIntelligenceCard({
                 </label>
                 <div className="mt-3 grid grid-cols-2 gap-2">
                   <Button variant="soft" className="min-h-10 rounded-xl text-xs" onClick={() => setEditingReportId(null)} disabled={busy}>Cancel</Button>
-                  <Button className="min-h-10 rounded-xl text-xs" onClick={() => saveMetrics(report)} disabled={busy}>Save Metrics</Button>
+                  <Button className="min-h-10 rounded-xl text-xs" onClick={() => saveMetrics(report)} disabled={busy}>Save Metrics & Analyze</Button>
+                </div>
+              </div>
+            )}
+            {!editingReportId && !hasInBodyMetrics(report) && (
+              <p className="mt-3 rounded-2xl bg-mist px-3 py-2 text-xs font-bold text-plum">No metrics yet. Tap Metrics, enter the InBody numbers, then save to create analysis.</p>
+            )}
+            {reportAnalysis && (
+              <div className="mt-3 rounded-[20px] bg-[#fbf7ff] p-3">
+                <p className="flex items-center gap-2 text-[10px] font-black uppercase text-lavender"><Sparkles size={13} /> Analysis</p>
+                <p className="mt-1 text-xs font-bold leading-5 text-[#75677f]">{reportAnalysis.summary}</p>
+                <div className="mt-2 grid gap-1.5">
+                  {reportAnalysis.recommendations.slice(0, 2).map((item) => (
+                    <p className="rounded-xl bg-white/75 px-3 py-2 text-[11px] font-bold text-plum" key={item}>{item}</p>
+                  ))}
                 </div>
               </div>
             )}
           </div>
-        ))}
+          );
+        })}
       </div>
     </Card>
   );
