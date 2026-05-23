@@ -333,6 +333,38 @@ export const listInBodyReports = async (ownerId: string) => {
   return (data ?? []).map(mapInBodyReport);
 };
 
+export const deleteInBodyReport = async (report: InBodyReport) => {
+  if (!supabase) return;
+  if (report.storagePath) {
+    const { error: storageError } = await supabase.storage.from("inbody-reports").remove([report.storagePath]);
+    if (storageError) throw storageError;
+  }
+  const { error: reportError } = await supabase.from("inbody_reports").delete().eq("id", report.id);
+  if (reportError) throw reportError;
+  await supabase.from("ai_reports").delete().contains("source_ids", [report.id]);
+};
+
+export const updateInBodyReportMetrics = async (
+  reportId: string,
+  patch: Pick<InBodyReport, "weight" | "skeletalMuscleMass" | "bodyFatPercentage" | "bodyFatMass" | "bmi" | "metabolicRate" | "notes">,
+) => {
+  if (!supabase) return;
+  const { error } = await supabase
+    .from("inbody_reports")
+    .update({
+      weight: patch.weight ?? null,
+      skeletal_muscle_mass: patch.skeletalMuscleMass ?? null,
+      body_fat_percentage: patch.bodyFatPercentage ?? null,
+      body_fat_mass: patch.bodyFatMass ?? null,
+      bmi: patch.bmi ?? null,
+      metabolic_rate: patch.metabolicRate ?? null,
+      notes: patch.notes ?? null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", reportId);
+  if (error) throw error;
+};
+
 export const listAIReports = async (ownerId: string) => {
   if (!supabase) return [];
   const { data, error } = await supabase

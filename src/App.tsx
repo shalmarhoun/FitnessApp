@@ -29,6 +29,7 @@ import {
   ShieldCheck,
   Sparkles,
   Timer,
+  Trash2,
   Trophy,
   Upload,
   UserPlus,
@@ -89,6 +90,8 @@ import {
   signInWithPassword,
   signOutCloud,
   subscribeToAuth,
+  deleteInBodyReport,
+  updateInBodyReportMetrics,
   uploadInBodyReport,
   upsertProfile,
   type CloudRole,
@@ -1712,6 +1715,12 @@ const createInBodyAnalysis = (report: InBodyReport, previous?: InBodyReport): AI
   };
 };
 
+const previousInBodyReport = (reports: InBodyReport[], report: InBodyReport) =>
+  [...reports]
+    .filter((item) => item.id !== report.id && new Date(item.reportDate).getTime() <= new Date(report.reportDate).getTime())
+    .sort((a, b) => new Date(b.reportDate).getTime() - new Date(a.reportDate).getTime())[0] ??
+  [...reports].filter((item) => item.id !== report.id).sort((a, b) => new Date(b.reportDate).getTime() - new Date(a.reportDate).getTime())[0];
+
 function InBodyIntelligenceCard({
   data,
   updateData,
@@ -1735,6 +1744,16 @@ function InBodyIntelligenceCard({
     metabolicRate: "",
     notes: "",
   });
+  const [editingReportId, setEditingReportId] = useState<string | null>(null);
+  const [metricsDraft, setMetricsDraft] = useState({
+    weight: "",
+    skeletalMuscleMass: "",
+    bodyFatPercentage: "",
+    bodyFatMass: "",
+    bmi: "",
+    metabolicRate: "",
+    notes: "",
+  });
   const sorted = [...(data.inbodyReports ?? [])].sort((a, b) => new Date(a.reportDate).getTime() - new Date(b.reportDate).getTime());
   const chartData = sorted.map((report) => ({
     date: new Date(report.reportDate).toLocaleDateString("en", { month: "short", day: "numeric" }),
@@ -1742,7 +1761,10 @@ function InBodyIntelligenceCard({
     bodyFat: report.bodyFatPercentage,
     muscle: report.skeletalMuscleMass,
   }));
-  const latestAnalysis = (data.aiReports ?? []).find((report) => report.reportType === "inbody");
+  const latestReport = [...(data.inbodyReports ?? [])].sort((a, b) => new Date(b.reportDate).getTime() - new Date(a.reportDate).getTime())[0];
+  const latestAnalysis =
+    (latestReport ? (data.aiReports ?? []).find((report) => report.reportType === "inbody" && report.sourceIds.includes(latestReport.id)) : undefined) ??
+    (latestReport ? createInBodyAnalysis(latestReport, previousInBodyReport(data.inbodyReports ?? [], latestReport)) : undefined);
 
   const uploadReport = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -1759,9 +1781,7 @@ function InBodyIntelligenceCard({
         metabolicRate: form.metabolicRate ? Number(form.metabolicRate) : undefined,
         notes: form.notes || undefined,
       });
-      const previous = [...(data.inbodyReports ?? [])]
-        .filter((item) => new Date(item.reportDate).getTime() <= new Date(report.reportDate).getTime())
-        .sort((a, b) => new Date(b.reportDate).getTime() - new Date(a.reportDate).getTime())[0] ?? data.inbodyReports?.[0];
+      const previous = previousInBodyReport(data.inbodyReports ?? [], report);
       const generatedAnalysis = createInBodyAnalysis(report, previous);
       const savedAnalysis = await saveAIReport(cloud.ownerId, generatedAnalysis).catch(() => generatedAnalysis);
       updateData((current) => {
@@ -1779,11 +1799,72 @@ function InBodyIntelligenceCard({
     }
   };
 
+  const removeReport = async (report: InBodyReport) => {
+    if (!window.confirm(`Remove ${report.fileName} from InBody reports?`)) return;
+    setBusy(true);
+    try {
+      await deleteInBodyReport(report);
+      updateData((current) => ({
+        ...current,
+        inbodyReports: (current.inbodyReports ?? []).filter((item) => item.id !== report.id),
+        aiReports: (current.aiReports ?? []).filter((item) => !item.sourceIds.includes(report.id)),
+      }));
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "Unable to remove InBody report.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const startMetricsEdit = (report: InBodyReport) => {
+    setEditingReportId(report.id);
+    setMetricsDraft({
+      weight: report.weight?.toString() ?? "",
+      skeletalMuscleMass: report.skeletalMuscleMass?.toString() ?? "",
+      bodyFatPercentage: report.bodyFatPercentage?.toString() ?? "",
+      bodyFatMass: report.bodyFatMass?.toString() ?? "",
+      bmi: report.bmi?.toString() ?? "",
+      metabolicRate: report.metabolicRate?.toString() ?? "",
+      notes: report.notes ?? "",
+    });
+  };
+
+  const saveMetrics = async (report: InBodyReport) => {
+    if (!cloud.ownerId) return;
+    setBusy(true);
+    try {
+      const patch = {
+        weight: metricsDraft.weight ? Number(metricsDraft.weight) : undefined,
+        skeletalMuscleMass: metricsDraft.skeletalMuscleMass ? Number(metricsDraft.skeletalMuscleMass) : undefined,
+        bodyFatPercentage: metricsDraft.bodyFatPercentage ? Number(metricsDraft.bodyFatPercentage) : undefined,
+        bodyFatMass: metricsDraft.bodyFatMass ? Number(metricsDraft.bodyFatMass) : undefined,
+        bmi: metricsDraft.bmi ? Number(metricsDraft.bmi) : undefined,
+        metabolicRate: metricsDraft.metabolicRate ? Number(metricsDraft.metabolicRate) : undefined,
+        notes: metricsDraft.notes || undefined,
+      };
+      const updatedReport = { ...report, ...patch };
+      await updateInBodyReportMetrics(report.id, patch);
+      const previous = previousInBodyReport((data.inbodyReports ?? []).map((item) => (item.id === report.id ? updatedReport : item)), updatedReport);
+      const generatedAnalysis = createInBodyAnalysis(updatedReport, previous);
+      const savedAnalysis = await saveAIReport(cloud.ownerId, generatedAnalysis).catch(() => generatedAnalysis);
+      updateData((current) => ({
+        ...current,
+        inbodyReports: (current.inbodyReports ?? []).map((item) => (item.id === report.id ? { ...item, ...patch } : item)),
+        aiReports: [savedAnalysis, ...(current.aiReports ?? []).filter((item) => !item.sourceIds.includes(report.id))],
+      }));
+      setEditingReportId(null);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "Unable to update InBody metrics.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <Card>
       <p className="flex items-center gap-2 text-xs font-black uppercase text-[#75677f]"><Activity size={16} /> InBody Archive</p>
       <h2 className="mt-1 text-xl font-black text-ink">Body composition memory.</h2>
-      <p className="mt-2 text-sm font-semibold text-[#75677f]">Reports are stored in private Supabase Storage and tracked as a timeline.</p>
+      <p className="mt-2 text-sm font-semibold text-[#75677f]">Reports are stored privately. Add metrics before or after upload so comparisons can be calculated automatically.</p>
       <div className="mt-4 grid gap-2 sm:grid-cols-2">
         {[
           ["reportDate", "Report Date", "date"],
@@ -1792,6 +1873,7 @@ function InBodyIntelligenceCard({
           ["bodyFatPercentage", "Body Fat %", "number"],
           ["bodyFatMass", "Body Fat Mass", "number"],
           ["bmi", "BMI", "number"],
+          ["metabolicRate", "Metabolic Rate", "number"],
         ].map(([key, label, type]) => (
           <label className="grid gap-1 text-[10px] font-black uppercase tracking-[0.12em] text-[#75677f]" key={key}>
             {label}
@@ -1851,10 +1933,51 @@ function InBodyIntelligenceCard({
         {(data.inbodyReports ?? []).slice(0, 3).map((report) => (
           <div className="rounded-2xl bg-white/75 p-3 ring-1 ring-silk" key={report.id}>
             <div className="flex items-center justify-between gap-3">
-              <p className="truncate text-sm font-black text-ink">{report.fileName}</p>
-              <span className="rounded-full bg-mist px-2 py-1 text-[10px] font-black uppercase text-lavender">{report.fileType}</span>
+              <div className="min-w-0">
+                <p className="truncate text-sm font-black text-ink">{report.fileName}</p>
+                <p className="mt-1 text-xs font-bold text-[#75677f]">{formatDisplayDate(new Date(report.reportDate))}</p>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <span className="rounded-full bg-mist px-2 py-1 text-[10px] font-black uppercase text-lavender">{report.fileType}</span>
+                {canUpload && (
+                  <>
+                    <button className="rounded-full bg-mist px-3 py-2 text-[10px] font-black uppercase text-lavender disabled:opacity-50" type="button" onClick={() => startMetricsEdit(report)} disabled={busy}>
+                      Metrics
+                    </button>
+                    <button className="flex h-9 w-9 items-center justify-center rounded-full bg-[#fff0f4] text-[#a93f5b] ring-1 ring-[#ffd4df] disabled:opacity-50" type="button" onClick={() => removeReport(report)} disabled={busy} aria-label={`Remove ${report.fileName}`}>
+                      <Trash2 size={15} />
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
-            <p className="mt-1 text-xs font-bold text-[#75677f]">{formatDisplayDate(new Date(report.reportDate))}</p>
+            {editingReportId === report.id && (
+              <div className="mt-3 rounded-[20px] bg-[#fbf7ff] p-3">
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {[
+                    ["weight", "Weight"],
+                    ["skeletalMuscleMass", "Skeletal Muscle"],
+                    ["bodyFatPercentage", "Body Fat %"],
+                    ["bodyFatMass", "Body Fat Mass"],
+                    ["bmi", "BMI"],
+                    ["metabolicRate", "Metabolic Rate"],
+                  ].map(([key, label]) => (
+                    <label className="grid gap-1 text-[9px] font-black uppercase tracking-[0.1em] text-[#75677f]" key={key}>
+                      {label}
+                      <input className="h-10 rounded-xl border border-silk bg-white px-3 text-sm font-bold normal-case tracking-normal outline-none focus:ring-2 focus:ring-lilac" type="number" value={metricsDraft[key as keyof typeof metricsDraft]} onChange={(event) => setMetricsDraft((current) => ({ ...current, [key]: event.target.value }))} />
+                    </label>
+                  ))}
+                </div>
+                <label className="mt-2 grid gap-1 text-[9px] font-black uppercase tracking-[0.1em] text-[#75677f]">
+                  Notes
+                  <textarea className="min-h-16 rounded-xl border border-silk bg-white px-3 py-2 text-sm font-bold normal-case tracking-normal outline-none focus:ring-2 focus:ring-lilac" value={metricsDraft.notes} onChange={(event) => setMetricsDraft((current) => ({ ...current, notes: event.target.value }))} />
+                </label>
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <Button variant="soft" className="min-h-10 rounded-xl text-xs" onClick={() => setEditingReportId(null)} disabled={busy}>Cancel</Button>
+                  <Button className="min-h-10 rounded-xl text-xs" onClick={() => saveMetrics(report)} disabled={busy}>Save Metrics</Button>
+                </div>
+              </div>
+            )}
           </div>
         ))}
       </div>
