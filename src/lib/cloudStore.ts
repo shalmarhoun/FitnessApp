@@ -341,21 +341,41 @@ export const listAIReports = async (ownerId: string) => {
     .eq("owner_id", ownerId)
     .order("created_at", { ascending: false });
   if (error) throw error;
-  return (data ?? []).map(
-    (item) =>
-      ({
-        id: item.id,
-        createdAt: item.created_at,
-        reportType: item.report_type,
-        title: item.title,
-        summary: item.summary,
-        recommendations: Array.isArray(item.recommendations) ? item.recommendations : [],
-        visibility: item.visibility,
-        sourceIds: Array.isArray(item.source_ids) ? item.source_ids : [],
-        approvedProgramChange: item.approved_program_change,
-      }) as AIInsightReport,
-  );
+  return (data ?? []).map(mapAIReport);
 };
+
+export const saveAIReport = async (ownerId: string, report: AIInsightReport) => {
+  if (!supabase) return report;
+  const { data, error } = await supabase
+    .from("ai_reports")
+    .insert({
+      owner_id: ownerId,
+      created_by: (await getCurrentSession())?.user.id,
+      report_type: report.reportType,
+      title: report.title,
+      summary: report.summary,
+      recommendations: report.recommendations,
+      visibility: report.visibility,
+      source_ids: report.sourceIds,
+      approved_program_change: report.approvedProgramChange ?? false,
+    })
+    .select("id,owner_id,report_type,title,summary,recommendations,visibility,source_ids,approved_program_change,created_at")
+    .single();
+  if (error) throw error;
+  return mapAIReport(data);
+};
+
+const mapAIReport = (item: any): AIInsightReport => ({
+  id: item.id,
+  createdAt: item.created_at,
+  reportType: item.report_type,
+  title: item.title,
+  summary: item.summary,
+  recommendations: Array.isArray(item.recommendations) ? item.recommendations : [],
+  visibility: item.visibility,
+  sourceIds: Array.isArray(item.source_ids) ? item.source_ids : [],
+  approvedProgramChange: item.approved_program_change,
+});
 
 const mapInBodyReport = (item: any): InBodyReport => ({
   id: item.id,

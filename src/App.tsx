@@ -58,6 +58,7 @@ import {
   formatDuration,
   latestPreviousSession,
   loadData,
+  normalizeAppData,
   sameWeekSessions,
   saveData,
   sessionVolume,
@@ -65,7 +66,7 @@ import {
   weekdayName,
   weekdays,
 } from "./data";
-import type { ActiveSession, AppData, LoggedExercise, MeasurementEntry, ProgramDay, ProgramExercise, Weekday, WorkoutSession } from "./types";
+import type { ActiveSession, AIInsightReport, AppData, InBodyReport, LoggedExercise, MeasurementEntry, ProgramDay, ProgramExercise, Weekday, WorkoutSession } from "./types";
 import {
   canManageAI,
   canManageUsers,
@@ -83,6 +84,7 @@ import {
   resetCloudPassword,
   revokePasswordUser,
   saveCloudSnapshot,
+  saveAIReport,
   saveWorkoutSessionRows,
   signInWithPassword,
   signOutCloud,
@@ -264,7 +266,7 @@ function App() {
         const snapshot = await loadCloudSnapshot(ownerId);
         if (!mounted) return;
         if (snapshot?.app_data?.meta) {
-          const safeSnapshot = dataForRole(snapshot.app_data, isOwnerProfile(profile, session.user));
+          const safeSnapshot = dataForRole(normalizeAppData(snapshot.app_data), isOwnerProfile(profile, session.user));
           const cloudTime = new Date(safeSnapshot.meta.updatedAt).getTime();
           const localTime = new Date(data.meta.updatedAt).getTime();
           if (cloudTime > localTime) setData(safeSnapshot);
@@ -715,25 +717,22 @@ function Dashboard({
 }) {
   const weekSessions = sameWeekSessions(data.sessions, selectedDate);
   const weeklyDone = new Set(weekSessions.map((session) => session.scheduledWeekday));
-  const weeklyGoal = data.preferences.trainingDays.length;
+  const trainingDays = Array.from(new Set(data.program.days.map((day) => day.weekday)));
+  const weeklyGoal = trainingDays.length;
   const weeklyVolume = weekSessions.reduce((total, session) => total + session.totalVolume, 0);
   const consistency = weeklyGoal ? Math.round((weeklyDone.size / weeklyGoal) * 100) : 0;
-  const bestStreak = calculateWeeklyStreak(data.sessions, data.preferences.trainingDays);
+  const bestStreak = calculateWeeklyStreak(data.sessions, trainingDays);
   const isToday = isSameDate(selectedDate, new Date());
   const isPast = isBeforeToday(selectedDate);
   const isSaturday = weekdayName(selectedDate) === "Saturday";
   const nextWorkout = nextWorkoutFromDate(data.program.days, selectedDate);
-  const selectedDateSessions = data.sessions.filter((session) => dateKey(new Date(session.completedAt)) === dateKey(selectedDate));
-  const showHistory = selectedDateSessions.length > 0;
 
   return (
     <motion.div {...pageMotion}>
       <TopGreeting openCalendar={openCalendar} />
       <Header eyebrow={isToday ? "Good morning" : formatDisplayDate(selectedDate)} title={isToday ? "Today" : selectedDate.toLocaleDateString("en", { month: "short", day: "numeric" })} />
       <div className="grid gap-5">
-        {showHistory ? (
-          <DayHistoryCard date={selectedDate} sessions={selectedDateSessions} />
-        ) : isPast ? (
+        {isPast ? (
           <Card className="relative overflow-hidden rounded-[34px] bg-gradient-to-br from-white via-[#fff7fb] to-[#f1ebff] p-6 md:p-7">
             <span className="inline-flex items-center gap-2 rounded-full border border-silk bg-white/60 px-4 py-2 text-xs font-black uppercase text-lavender">
               <Calendar size={16} /> History
@@ -813,7 +812,7 @@ function Dashboard({
             <div>
               <p className="mb-5 text-xl font-semibold text-[#75677f]">{selectedWorkout ? "Keep going. You're on track." : "Rest days still count toward the rhythm."}</p>
               <div className="grid grid-cols-3 gap-4">
-                {data.preferences.trainingDays.map((day) => (
+                {trainingDays.map((day) => (
                   <div className="text-center" key={day}>
                     <div className={`mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-full text-xl font-black ${weeklyDone.has(day) ? "bg-mist text-lavender" : "border-2 border-dashed border-lilac/80 text-lavender"}`}>
                       {weeklyDone.has(day) ? <Check size={22} /> : <Dumbbell size={19} />}
@@ -1520,7 +1519,7 @@ function SettingsScreen({
             <div className="mt-3 grid gap-2 text-sm font-bold text-[#75677f]">
               <p>Week starts on Sunday.</p>
               <p>Default rest timer: {data.preferences.defaultRestSeconds} sec.</p>
-              <p>Training days: {data.preferences.trainingDays.join(", ")}.</p>
+              <p>Training days: {Array.from(new Set(data.program.days.map((day) => day.weekday))).join(", ")}.</p>
             </div>
           </Card>
           <Card>
@@ -1649,6 +1648,70 @@ const SettingsSectionTitle = ({ title, description }: { title: string; descripti
   </div>
 );
 
+const formatMetric = (value?: number, unit = "") => (typeof value === "number" && Number.isFinite(value) ? `${value.toFixed(value % 1 === 0 ? 0 : 1)}${unit}` : "not logged");
+
+const metricComparison = (label: string, current?: number, previous?: number, unit = "", lowerIsBetter = false) => {
+  if (typeof current !== "number" || typeof previous !== "number") return undefined;
+  const delta = current - previous;
+  if (Math.abs(delta) < 0.05) return `${label} stayed steady at ${formatMetric(current, unit)}.`;
+  const direction = delta > 0 ? "up" : "down";
+  const positive = lowerIsBetter ? delta < 0 : delta > 0;
+  return `${label} moved ${direction} ${Math.abs(delta).toFixed(1)}${unit} to ${formatMetric(current, unit)}${positive ? ", a positive trend." : ", worth watching calmly."}`;
+};
+
+const createInBodyAnalysis = (report: InBodyReport, previous?: InBodyReport): AIInsightReport => {
+  const sourceIds = previous ? [previous.id, report.id] : [report.id];
+  if (!previous) {
+    return {
+      id: uid(),
+      createdAt: new Date().toISOString(),
+      reportType: "inbody",
+      title: "First InBody Baseline",
+      summary: `Baseline saved for ${formatDisplayDate(new Date(report.reportDate))}. Weight ${formatMetric(report.weight, " kg")}, body fat ${formatMetric(report.bodyFatPercentage, "%")}, skeletal muscle ${formatMetric(report.skeletalMuscleMass, " kg")}.`,
+      recommendations: [
+        "Use the next InBody upload as the first comparison point.",
+        "Keep report metrics filled in so the app can compare trends automatically.",
+        "Treat this as context for training rhythm, not a daily judgment.",
+      ],
+      visibility: "shared_analytics",
+      sourceIds,
+      approvedProgramChange: false,
+    };
+  }
+
+  const comparisons = [
+    metricComparison("Weight", report.weight, previous.weight, " kg", false),
+    metricComparison("Skeletal muscle", report.skeletalMuscleMass, previous.skeletalMuscleMass, " kg", false),
+    metricComparison("Body fat", report.bodyFatPercentage, previous.bodyFatPercentage, "%", true),
+    metricComparison("Body fat mass", report.bodyFatMass, previous.bodyFatMass, " kg", true),
+    metricComparison("BMI", report.bmi, previous.bmi, "", true),
+    metricComparison("Metabolic rate", report.metabolicRate, previous.metabolicRate, " kcal", false),
+  ].filter(Boolean) as string[];
+
+  const hasMeaningfulComparison = comparisons.length > 0;
+  return {
+    id: uid(),
+    createdAt: new Date().toISOString(),
+    reportType: "inbody",
+    title: "InBody Comparison",
+    summary: hasMeaningfulComparison
+      ? `Compared ${formatDisplayDate(new Date(report.reportDate))} with ${formatDisplayDate(new Date(previous.reportDate))}. ${comparisons.slice(0, 2).join(" ")}`
+      : `Report saved for ${formatDisplayDate(new Date(report.reportDate))}. Add numeric metrics to this and the previous report to unlock automatic trend comparison.`,
+    recommendations: hasMeaningfulComparison
+      ? [
+          ...comparisons.slice(0, 4),
+          "Use this trend as decision support. Training plan edits still need owner approval.",
+        ]
+      : [
+          "Enter weight, body fat, muscle mass, or BMI with each report for automatic comparison.",
+          "Keep every report archived so long-term changes stay visible.",
+        ],
+    visibility: "shared_analytics",
+    sourceIds,
+    approvedProgramChange: false,
+  };
+};
+
 function InBodyIntelligenceCard({
   data,
   updateData,
@@ -1679,6 +1742,7 @@ function InBodyIntelligenceCard({
     bodyFat: report.bodyFatPercentage,
     muscle: report.skeletalMuscleMass,
   }));
+  const latestAnalysis = (data.aiReports ?? []).find((report) => report.reportType === "inbody");
 
   const uploadReport = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -1695,7 +1759,18 @@ function InBodyIntelligenceCard({
         metabolicRate: form.metabolicRate ? Number(form.metabolicRate) : undefined,
         notes: form.notes || undefined,
       });
-      updateData((current) => ({ ...current, inbodyReports: [report, ...(current.inbodyReports ?? [])] }));
+      const previous = [...(data.inbodyReports ?? [])]
+        .filter((item) => new Date(item.reportDate).getTime() <= new Date(report.reportDate).getTime())
+        .sort((a, b) => new Date(b.reportDate).getTime() - new Date(a.reportDate).getTime())[0] ?? data.inbodyReports?.[0];
+      const generatedAnalysis = createInBodyAnalysis(report, previous);
+      const savedAnalysis = await saveAIReport(cloud.ownerId, generatedAnalysis).catch(() => generatedAnalysis);
+      updateData((current) => {
+        return {
+          ...current,
+          inbodyReports: [report, ...(current.inbodyReports ?? [])],
+          aiReports: [savedAnalysis, ...(current.aiReports ?? [])],
+        };
+      });
     } catch (error) {
       window.alert(error instanceof Error ? error.message : "Unable to upload InBody report.");
     } finally {
@@ -1757,6 +1832,21 @@ function InBodyIntelligenceCard({
           <div className="flex h-full items-center justify-center rounded-2xl bg-mist text-center text-sm font-bold text-[#75677f]">Upload your first InBody report to unlock body composition trends.</div>
         )}
       </div>
+      {latestAnalysis && (
+        <div className="mt-4 rounded-[24px] bg-gradient-to-br from-white via-[#fff7fb] to-[#f2ecff] p-4 ring-1 ring-silk">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <p className="flex items-center gap-2 text-xs font-black uppercase text-lavender"><Sparkles size={15} /> Latest Analysis</p>
+            <span className="rounded-full bg-white/75 px-2 py-1 text-[10px] font-black uppercase text-[#75677f]">Auto saved</span>
+          </div>
+          <h3 className="text-base font-black text-ink">{latestAnalysis.title}</h3>
+          <p className="mt-1 text-xs font-bold leading-5 text-[#75677f]">{latestAnalysis.summary}</p>
+          <div className="mt-3 grid gap-2">
+            {latestAnalysis.recommendations.slice(0, 3).map((item) => (
+              <p className="rounded-2xl bg-white/70 px-3 py-2 text-xs font-bold text-plum" key={item}>{item}</p>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="mt-4 space-y-2">
         {(data.inbodyReports ?? []).slice(0, 3).map((report) => (
           <div className="rounded-2xl bg-white/75 p-3 ring-1 ring-silk" key={report.id}>
@@ -1955,16 +2045,14 @@ function ProgramEditor({ data, updateData }: { data: AppData; updateData: (updat
   const closeAllDays = () => setOpenDayIds(new Set());
 
   const updateDay = (dayId: string, patch: Partial<ProgramDay>) =>
-    updateData((current) => ({
-      ...current,
-      preferences: patch.weekday
-        ? {
-            ...current.preferences,
-            trainingDays: current.program.days.map((day) => (day.id === dayId ? patch.weekday! : day.weekday)),
-          }
-        : current.preferences,
-      program: { ...current.program, days: current.program.days.map((day) => (day.id === dayId ? { ...day, ...patch } : day)) },
-    }));
+    updateData((current) => {
+      const days = current.program.days.map((day) => (day.id === dayId ? { ...day, ...patch } : day));
+      return {
+        ...current,
+        preferences: { ...current.preferences, trainingDays: Array.from(new Set(days.map((day) => day.weekday))) },
+        program: { ...current.program, days },
+      };
+    });
 
   const updateExercise = (dayId: string, exerciseId: string, patch: Partial<ProgramExercise>) =>
     updateData((current) => ({
@@ -2003,21 +2091,18 @@ function ProgramEditor({ data, updateData }: { data: AppData; updateData: (updat
       const nextDay: ProgramDay = { id: uid(), title: "New Training Day", weekday, warmup: [], exercises: [] };
       return {
         ...current,
-        preferences: { ...current.preferences, trainingDays: [...current.preferences.trainingDays, weekday] },
+        preferences: { ...current.preferences, trainingDays: Array.from(new Set([...current.preferences.trainingDays, weekday])) },
         program: { ...current.program, days: [...current.program.days, nextDay] },
       };
     });
 
   const removeDay = (dayId: string) =>
     updateData((current) => {
-      const target = current.program.days.find((day) => day.id === dayId);
+      const days = current.program.days.filter((day) => day.id !== dayId);
       return {
         ...current,
-        preferences: {
-          ...current.preferences,
-          trainingDays: target ? current.preferences.trainingDays.filter((weekday) => weekday !== target.weekday) : current.preferences.trainingDays,
-        },
-        program: { ...current.program, days: current.program.days.filter((day) => day.id !== dayId) },
+        preferences: { ...current.preferences, trainingDays: Array.from(new Set(days.map((day) => day.weekday))) },
+        program: { ...current.program, days },
       };
     });
 
@@ -2194,6 +2279,7 @@ function CalendarSheet({
   onClose: () => void;
 }) {
   const [visibleMonth, setVisibleMonth] = useState(() => startOfMonth(selectedDate));
+  const [historyDate, setHistoryDate] = useState<Date | null>(null);
   const monthLabel = visibleMonth.toLocaleDateString("en", { month: "long", year: "numeric" });
   const first = startOfMonth(visibleMonth);
   const gridStart = new Date(first);
@@ -2204,8 +2290,15 @@ function CalendarSheet({
     return date;
   });
   const completedDates = new Set(data.sessions.map((session) => dateKey(new Date(session.completedAt))));
+  const historySessions = historyDate ? data.sessions.filter((session) => dateKey(new Date(session.completedAt)) === dateKey(historyDate)) : [];
 
   const chooseDate = (date: Date) => {
+    if (completedDates.has(dateKey(date))) {
+      setHistoryDate(date);
+      onSelectDate(date);
+      setVisibleMonth(startOfMonth(date));
+      return;
+    }
     onSelectDate(date);
     setVisibleMonth(startOfMonth(date));
     onClose();
@@ -2214,7 +2307,7 @@ function CalendarSheet({
   return (
     <motion.div className="fixed inset-0 z-[70] flex items-end bg-[#241b2f]/28 px-3 pb-3 backdrop-blur-sm md:items-center md:justify-center md:p-6" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
       <motion.div
-        className="glass max-h-[88vh] w-full max-w-lg overflow-hidden rounded-[34px] p-5"
+        className="glass max-h-[88vh] w-full max-w-lg overflow-y-auto rounded-[34px] p-5"
         initial={{ y: 34, opacity: 0, scale: 0.98 }}
         animate={{ y: 0, opacity: 1, scale: 1 }}
         exit={{ y: 24, opacity: 0, scale: 0.98 }}
@@ -2222,64 +2315,70 @@ function CalendarSheet({
       >
         <div className="mb-5 flex items-center justify-between gap-3">
           <div>
-            <p className="text-xs font-black uppercase tracking-[0.16em] text-lavender">Calendar</p>
-            <h2 className="mt-1 text-2xl font-black text-ink">{monthLabel}</h2>
+            <p className="text-xs font-black uppercase tracking-[0.16em] text-lavender">{historyDate ? "Workout History" : "Calendar"}</p>
+            <h2 className="mt-1 text-2xl font-black text-ink">{historyDate ? formatDisplayDate(historyDate) : monthLabel}</h2>
           </div>
           <div className="flex items-center gap-2">
-            <button className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white/75 text-plum ring-1 ring-silk" type="button" aria-label="Previous month" onClick={() => setVisibleMonth((date) => addMonths(date, -1))}>
+            {historyDate && (
+              <button className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white/75 text-plum ring-1 ring-silk" type="button" aria-label="Back to calendar" onClick={() => setHistoryDate(null)}>
+                <ArrowLeft size={20} />
+              </button>
+            )}
+            {!historyDate && <button className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white/75 text-plum ring-1 ring-silk" type="button" aria-label="Previous month" onClick={() => setVisibleMonth((date) => addMonths(date, -1))}>
               <ChevronLeft size={20} />
-            </button>
-            <button className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white/75 text-plum ring-1 ring-silk" type="button" aria-label="Next month" onClick={() => setVisibleMonth((date) => addMonths(date, 1))}>
+            </button>}
+            {!historyDate && <button className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white/75 text-plum ring-1 ring-silk" type="button" aria-label="Next month" onClick={() => setVisibleMonth((date) => addMonths(date, 1))}>
               <ChevronRight size={20} />
-            </button>
+            </button>}
             <button className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white/75 text-plum ring-1 ring-silk" type="button" aria-label="Close calendar" onClick={onClose}>
               <X size={19} />
             </button>
           </div>
         </div>
 
-        <div className="grid grid-cols-7 gap-1 pb-2 text-center text-[11px] font-black uppercase text-[#75677f]">
-          {weekdays.map((weekday) => <span key={weekday}>{weekday.slice(0, 3)}</span>)}
-        </div>
         <AnimatePresence mode="wait">
-          <motion.div
-            className="grid grid-cols-7 gap-1.5"
-            key={dateKey(visibleMonth)}
-            initial={{ opacity: 0, x: 16 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -16 }}
-            transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
-          >
-            {days.map((date) => {
-              const key = dateKey(date);
-              const workout = findWorkoutForDate(data.program.days, date);
-              const selected = isSameDate(date, selectedDate);
-              const currentMonth = date.getMonth() === visibleMonth.getMonth();
-              const completed = completedDates.has(key);
-              const saturday = weekdayName(date) === "Saturday";
-              return (
-                <button
-                  className={`min-h-[58px] rounded-[18px] p-1.5 text-left transition ${selected ? "bg-lavender text-white shadow-glow" : currentMonth ? "bg-white/72 text-ink ring-1 ring-white/80" : "bg-white/35 text-[#aa9fb7]"} ${isSameDate(date, new Date()) && !selected ? "ring-2 ring-lilac" : ""}`}
-                  key={key}
-                  type="button"
-                  onClick={() => chooseDate(date)}
-                  aria-label={`${formatDisplayDate(date)}${workout ? `, ${workout.title}` : saturday ? ", measurement day" : ", recovery day"}`}
-                >
-                  <span className="block text-sm font-black">{date.getDate()}</span>
-                  <span className={`mt-1 block h-1.5 w-1.5 rounded-full ${completed ? "bg-sage" : workout ? selected ? "bg-white" : "bg-lavender" : saturday ? "bg-blush" : "bg-transparent"}`} />
-                  <span className={`mt-1 block truncate text-[9px] font-black uppercase ${selected ? "text-white/90" : "text-[#75677f]"}`}>
-                    {completed ? "Done" : workout ? "Lift" : saturday ? "Measure" : ""}
-                  </span>
-                </button>
-              );
-            })}
-          </motion.div>
+          {historyDate ? (
+            <motion.div key="history" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} transition={{ duration: 0.2 }}>
+              <DayHistoryCard date={historyDate} sessions={historySessions} />
+            </motion.div>
+          ) : (
+            <motion.div key={dateKey(visibleMonth)} initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -16 }} transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}>
+              <div className="grid grid-cols-7 gap-1 pb-2 text-center text-[11px] font-black uppercase text-[#75677f]">
+                {weekdays.map((weekday) => <span key={weekday}>{weekday.slice(0, 3)}</span>)}
+              </div>
+              <div className="grid grid-cols-7 gap-1.5">
+                {days.map((date) => {
+                  const key = dateKey(date);
+                  const workout = findWorkoutForDate(data.program.days, date);
+                  const selected = isSameDate(date, selectedDate);
+                  const currentMonth = date.getMonth() === visibleMonth.getMonth();
+                  const completed = completedDates.has(key);
+                  const saturday = weekdayName(date) === "Saturday";
+                  return (
+                    <button
+                      className={`min-h-[58px] rounded-[18px] p-1.5 text-left transition ${selected ? "bg-lavender text-white shadow-glow" : currentMonth ? "bg-white/72 text-ink ring-1 ring-white/80" : "bg-white/35 text-[#aa9fb7]"} ${isSameDate(date, new Date()) && !selected ? "ring-2 ring-lilac" : ""}`}
+                      key={key}
+                      type="button"
+                      onClick={() => chooseDate(date)}
+                      aria-label={`${formatDisplayDate(date)}${completed ? ", done, view workout history" : workout ? `, ${workout.title}` : saturday ? ", measurement day" : ", recovery day"}`}
+                    >
+                      <span className="block text-sm font-black">{date.getDate()}</span>
+                      <span className={`mt-1 block h-1.5 w-1.5 rounded-full ${completed ? "bg-sage" : workout ? selected ? "bg-white" : "bg-lavender" : saturday ? "bg-blush" : "bg-transparent"}`} />
+                      <span className={`mt-1 block truncate text-[9px] font-black uppercase ${selected ? "text-white/90" : "text-[#75677f]"}`}>
+                        {completed ? "Done" : workout ? "Lift" : saturday ? "Measure" : ""}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </motion.div>
+          )}
         </AnimatePresence>
-        <div className="mt-5 grid grid-cols-3 gap-2 text-center text-[11px] font-black uppercase text-[#75677f]">
+        {!historyDate && <div className="mt-5 grid grid-cols-3 gap-2 text-center text-[11px] font-black uppercase text-[#75677f]">
           <span className="rounded-full bg-white/65 px-2 py-2"><span className="mr-1 inline-block h-2 w-2 rounded-full bg-lavender" />Workout</span>
           <span className="rounded-full bg-white/65 px-2 py-2"><span className="mr-1 inline-block h-2 w-2 rounded-full bg-blush" />Measure</span>
           <span className="rounded-full bg-white/65 px-2 py-2"><span className="mr-1 inline-block h-2 w-2 rounded-full bg-sage" />Done</span>
-        </div>
+        </div>}
       </motion.div>
     </motion.div>
   );
@@ -2301,7 +2400,8 @@ const evaluateAchievements = (data: AppData, session: WorkoutSession) => {
   if (improvedExercises >= 3 && !alreadyEarned.has("progressive-overload")) earned.add("progressive-overload");
   const weekSessions = sameWeekSessions([...data.sessions, session]);
   const completedDays = new Set(weekSessions.map((item) => item.scheduledWeekday));
-  if (data.preferences.trainingDays.every((day) => completedDays.has(day)) && !alreadyEarned.has("weekly-grace")) earned.add("weekly-grace");
+  const plannedDays = Array.from(new Set(data.program.days.map((day) => day.weekday)));
+  if (plannedDays.every((day) => completedDays.has(day)) && !alreadyEarned.has("weekly-grace")) earned.add("weekly-grace");
   return [...earned];
 };
 

@@ -98,6 +98,24 @@ export const createDefaultData = (): AppData => {
   };
 };
 
+export const normalizeAppData = (parsed: AppData): AppData => {
+  const trainingDays = Array.from(new Set(parsed.program.days.map((day) => day.weekday)));
+  return {
+    ...parsed,
+    preferences: {
+      ...(parsed.preferences ?? createDefaultData().preferences),
+      weekStartsOn: "Sunday",
+      trainingDays: trainingDays.length ? trainingDays : parsed.preferences?.trainingDays ?? ["Sunday", "Tuesday", "Thursday"],
+    },
+    inbodyReports: parsed.inbodyReports ?? [],
+    aiReports: parsed.aiReports ?? [],
+    achievements: achievementCatalog.map((achievement) => ({
+      ...achievement,
+      earnedAt: parsed.achievements?.find((item) => item.id === achievement.id)?.earnedAt,
+    })),
+  };
+};
+
 export const loadData = (): AppData => {
   try {
     const raw = localStorage.getItem(storageKey);
@@ -106,15 +124,7 @@ export const loadData = (): AppData => {
     if (!parsed.meta || parsed.meta.schemaVersion !== 1 || !Array.isArray(parsed.program?.days)) {
       return createDefaultData();
     }
-    return {
-      ...parsed,
-      inbodyReports: parsed.inbodyReports ?? [],
-      aiReports: parsed.aiReports ?? [],
-      achievements: achievementCatalog.map((achievement) => ({
-        ...achievement,
-        earnedAt: parsed.achievements?.find((item) => item.id === achievement.id)?.earnedAt,
-      })),
-    };
+    return normalizeAppData(parsed);
   } catch {
     return createDefaultData();
   }
