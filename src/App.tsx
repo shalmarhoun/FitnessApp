@@ -257,7 +257,8 @@ function App() {
         setCloud({ configured: true, session, user: session.user, profile, ownerId, permissions, status: "synced", message: "Cloud sync is active." });
       } catch (error) {
         if (!mounted) return;
-        setCloud((current) => ({ ...current, status: "error", message: error instanceof Error ? error.message : "Unable to connect to Supabase." }));
+        const message = error instanceof Error ? error.message : "Unable to connect to Supabase.";
+        setCloud((current) => ({ ...current, status: "error", message: `Supabase profile sync failed: ${message}` }));
       }
     };
     hydrate();
