@@ -724,7 +724,7 @@ function Dashboard({
   const isSaturday = weekdayName(selectedDate) === "Saturday";
   const nextWorkout = nextWorkoutFromDate(data.program.days, selectedDate);
   const selectedDateSessions = data.sessions.filter((session) => dateKey(new Date(session.completedAt)) === dateKey(selectedDate));
-  const showHistory = isPast && selectedDateSessions.length > 0;
+  const showHistory = selectedDateSessions.length > 0;
 
   return (
     <motion.div {...pageMotion}>
@@ -1940,6 +1940,20 @@ function PermissionsCard({ cloud, setCloud }: { cloud: CloudState; setCloud: Rea
 }
 
 function ProgramEditor({ data, updateData }: { data: AppData; updateData: (updater: (data: AppData) => AppData) => void }) {
+  const [openDayIds, setOpenDayIds] = useState<Set<string>>(() => new Set());
+
+  const toggleDay = (dayId: string) => {
+    setOpenDayIds((current) => {
+      const next = new Set(current);
+      if (next.has(dayId)) next.delete(dayId);
+      else next.add(dayId);
+      return next;
+    });
+  };
+
+  const openAllDays = () => setOpenDayIds(new Set(data.program.days.map((day) => day.id)));
+  const closeAllDays = () => setOpenDayIds(new Set());
+
   const updateDay = (dayId: string, patch: Partial<ProgramDay>) =>
     updateData((current) => ({
       ...current,
@@ -2054,60 +2068,92 @@ function ProgramEditor({ data, updateData }: { data: AppData; updateData: (updat
           <p className="text-xs font-black uppercase text-[#75677f]">Workout Program Management</p>
           <h2 className="mt-1 text-xl font-black text-ink">Weekly structure with immutable history.</h2>
         </div>
-        <Button variant="soft" onClick={addDay}><Plus size={17} /> Add Day</Button>
+        <div className="grid grid-cols-2 gap-2 sm:flex">
+          <Button variant="ghost" onClick={openAllDays}><Eye size={17} /> Expand</Button>
+          <Button variant="ghost" onClick={closeAllDays}><ChevronUp size={17} /> Collapse</Button>
+          <Button variant="soft" className="col-span-2" onClick={addDay}><Plus size={17} /> Add Day</Button>
+        </div>
       </div>
-      <div className="mt-4 space-y-5">
-        {data.program.days.map((day) => (
+      <div className="mt-4 space-y-3">
+        {data.program.days.map((day) => {
+          const isOpen = openDayIds.has(day.id);
+          const totalSets = day.exercises.reduce((sum, exercise) => sum + exercise.targetSets, 0);
+          return (
           <div className="rounded-[20px] border border-silk bg-white/65 p-4" key={day.id}>
-            <div className="grid gap-3 md:grid-cols-[1fr_160px_132px]">
-              <label className="grid gap-1 text-[10px] font-black uppercase tracking-[0.12em] text-[#75677f]">
-                Workout Title
-                <input className="h-12 rounded-2xl border border-silk bg-white px-4 text-sm font-black normal-case tracking-normal outline-none focus:ring-2 focus:ring-lilac" value={day.title} onChange={(event) => updateDay(day.id, { title: event.target.value })} />
-              </label>
-              <label className="grid gap-1 text-[10px] font-black uppercase tracking-[0.12em] text-[#75677f]">
-                Day
-                <select className="h-12 rounded-2xl border border-silk bg-white px-4 text-sm font-black normal-case tracking-normal outline-none" value={day.weekday} onChange={(event) => updateDay(day.id, { weekday: event.target.value as Weekday })}>
-                  {weekdays.map((weekday) => <option key={weekday}>{weekday}</option>)}
-                </select>
-              </label>
-              <div className="grid grid-cols-3 gap-2 pt-5">
-                <button aria-label="Move day up" className="rounded-xl bg-white text-plum ring-1 ring-silk" onClick={() => moveDay(day.id, -1)} type="button"><ChevronUp className="mx-auto" size={17} /></button>
-                <button aria-label="Move day down" className="rounded-xl bg-white text-plum ring-1 ring-silk" onClick={() => moveDay(day.id, 1)} type="button"><ChevronDown className="mx-auto" size={17} /></button>
-                <button aria-label="Remove day" className="rounded-xl bg-[#fff0f4] text-[#a93f5b] ring-1 ring-[#ffd2de]" onClick={() => removeDay(day.id)} type="button"><X className="mx-auto" size={16} /></button>
-              </div>
+            <div className="flex items-center justify-between gap-3">
+              <button className="min-w-0 flex-1 text-left" type="button" onClick={() => toggleDay(day.id)} aria-expanded={isOpen}>
+                <p className="text-xs font-black uppercase text-lavender">{day.weekday}</p>
+                <h3 className="mt-1 truncate text-lg font-black text-ink">{day.title}</h3>
+                <p className="mt-1 text-xs font-bold text-[#75677f]">{day.exercises.length} exercises / {totalSets} sets</p>
+              </button>
+              <button className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white text-plum ring-1 ring-silk" type="button" onClick={() => toggleDay(day.id)} aria-label={isOpen ? "Collapse workout day" : "Edit workout day"}>
+                {isOpen ? <ChevronUp size={20} /> : <Edit3 size={18} />}
+              </button>
             </div>
-            <div className="mt-3 space-y-3">
-              {day.exercises.map((exercise) => (
-                <div className="grid gap-2 rounded-2xl bg-mist/60 p-3 md:grid-cols-[1fr_72px_72px_82px_82px_152px]" key={exercise.id}>
-                  <label className="grid gap-1 text-[9px] font-black uppercase tracking-[0.1em] text-[#75677f]">Exercise<input className="h-11 rounded-xl border border-silk bg-white px-3 text-sm font-bold normal-case tracking-normal outline-none" value={exercise.name} onChange={(event) => updateExercise(day.id, exercise.id, { name: event.target.value })} /></label>
-                  <label className="grid gap-1 text-[9px] font-black uppercase tracking-[0.1em] text-[#75677f]">Sets<input className="h-11 rounded-xl border border-silk bg-white px-3 text-sm font-bold normal-case tracking-normal outline-none" type="number" value={exercise.targetSets} onChange={(event) => updateExercise(day.id, exercise.id, { targetSets: Number(event.target.value) })} /></label>
-                  <label className="grid gap-1 text-[9px] font-black uppercase tracking-[0.1em] text-[#75677f]">Reps<input className="h-11 rounded-xl border border-silk bg-white px-3 text-sm font-bold normal-case tracking-normal outline-none" value={exercise.targetReps} onChange={(event) => updateExercise(day.id, exercise.id, { targetReps: event.target.value === "failure" ? "failure" : Number(event.target.value) })} /></label>
-                  <label className="grid gap-1 text-[9px] font-black uppercase tracking-[0.1em] text-[#75677f]">Weight<input className="h-11 rounded-xl border border-silk bg-white px-3 text-sm font-bold normal-case tracking-normal outline-none" type="number" value={exercise.defaultWeight} onChange={(event) => updateExercise(day.id, exercise.id, { defaultWeight: Number(event.target.value) })} /></label>
-                  <label className="grid gap-1 text-[9px] font-black uppercase tracking-[0.1em] text-[#75677f]">Rest<input className="h-11 rounded-xl border border-silk bg-white px-3 text-sm font-bold normal-case tracking-normal outline-none" type="number" value={exercise.restSeconds ?? data.preferences.defaultRestSeconds} onChange={(event) => updateExercise(day.id, exercise.id, { restSeconds: Number(event.target.value) })} /></label>
-                  <div className="grid grid-cols-3 gap-2">
-                    <button aria-label="Move exercise up" className="rounded-xl bg-white text-plum ring-1 ring-silk" onClick={() => moveExercise(day.id, exercise.id, -1)} type="button">
-                      <ChevronUp className="mx-auto" size={17} />
-                    </button>
-                    <button aria-label="Move exercise down" className="rounded-xl bg-white text-plum ring-1 ring-silk" onClick={() => moveExercise(day.id, exercise.id, 1)} type="button">
-                      <ChevronDown className="mx-auto" size={17} />
-                    </button>
-                    <button aria-label="Remove exercise" className="rounded-xl bg-[#fff0f4] text-[#a93f5b] ring-1 ring-[#ffd2de]" onClick={() => removeExercise(day.id, exercise.id)} type="button">
-                      <X className="mx-auto" size={16} />
-                    </button>
+
+            <AnimatePresence initial={false}>
+              {isOpen && (
+                <motion.div
+                  className="overflow-hidden"
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: "auto", opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+                >
+                  <div className="mt-4 border-t border-silk pt-4">
+                    <div className="grid gap-3 md:grid-cols-[1fr_160px_132px]">
+                      <label className="grid gap-1 text-[10px] font-black uppercase tracking-[0.12em] text-[#75677f]">
+                        Workout Title
+                        <input className="h-12 rounded-2xl border border-silk bg-white px-4 text-sm font-black normal-case tracking-normal outline-none focus:ring-2 focus:ring-lilac" value={day.title} onChange={(event) => updateDay(day.id, { title: event.target.value })} />
+                      </label>
+                      <label className="grid gap-1 text-[10px] font-black uppercase tracking-[0.12em] text-[#75677f]">
+                        Day
+                        <select className="h-12 rounded-2xl border border-silk bg-white px-4 text-sm font-black normal-case tracking-normal outline-none" value={day.weekday} onChange={(event) => updateDay(day.id, { weekday: event.target.value as Weekday })}>
+                          {weekdays.map((weekday) => <option key={weekday}>{weekday}</option>)}
+                        </select>
+                      </label>
+                      <div className="grid grid-cols-3 gap-2 pt-5">
+                        <button aria-label="Move day up" className="rounded-xl bg-white text-plum ring-1 ring-silk" onClick={() => moveDay(day.id, -1)} type="button"><ChevronUp className="mx-auto" size={17} /></button>
+                        <button aria-label="Move day down" className="rounded-xl bg-white text-plum ring-1 ring-silk" onClick={() => moveDay(day.id, 1)} type="button"><ChevronDown className="mx-auto" size={17} /></button>
+                        <button aria-label="Remove day" className="rounded-xl bg-[#fff0f4] text-[#a93f5b] ring-1 ring-[#ffd2de]" onClick={() => removeDay(day.id)} type="button"><X className="mx-auto" size={16} /></button>
+                      </div>
+                    </div>
+                    <div className="mt-3 space-y-3">
+                      {day.exercises.map((exercise) => (
+                        <div className="grid gap-2 rounded-2xl bg-mist/60 p-3 md:grid-cols-[1fr_72px_72px_82px_82px_152px]" key={exercise.id}>
+                          <label className="grid gap-1 text-[9px] font-black uppercase tracking-[0.1em] text-[#75677f]">Exercise<input className="h-11 rounded-xl border border-silk bg-white px-3 text-sm font-bold normal-case tracking-normal outline-none" value={exercise.name} onChange={(event) => updateExercise(day.id, exercise.id, { name: event.target.value })} /></label>
+                          <label className="grid gap-1 text-[9px] font-black uppercase tracking-[0.1em] text-[#75677f]">Sets<input className="h-11 rounded-xl border border-silk bg-white px-3 text-sm font-bold normal-case tracking-normal outline-none" type="number" value={exercise.targetSets} onChange={(event) => updateExercise(day.id, exercise.id, { targetSets: Number(event.target.value) })} /></label>
+                          <label className="grid gap-1 text-[9px] font-black uppercase tracking-[0.1em] text-[#75677f]">Reps<input className="h-11 rounded-xl border border-silk bg-white px-3 text-sm font-bold normal-case tracking-normal outline-none" value={exercise.targetReps} onChange={(event) => updateExercise(day.id, exercise.id, { targetReps: event.target.value === "failure" ? "failure" : Number(event.target.value) })} /></label>
+                          <label className="grid gap-1 text-[9px] font-black uppercase tracking-[0.1em] text-[#75677f]">Weight<input className="h-11 rounded-xl border border-silk bg-white px-3 text-sm font-bold normal-case tracking-normal outline-none" type="number" value={exercise.defaultWeight} onChange={(event) => updateExercise(day.id, exercise.id, { defaultWeight: Number(event.target.value) })} /></label>
+                          <label className="grid gap-1 text-[9px] font-black uppercase tracking-[0.1em] text-[#75677f]">Rest<input className="h-11 rounded-xl border border-silk bg-white px-3 text-sm font-bold normal-case tracking-normal outline-none" type="number" value={exercise.restSeconds ?? data.preferences.defaultRestSeconds} onChange={(event) => updateExercise(day.id, exercise.id, { restSeconds: Number(event.target.value) })} /></label>
+                          <div className="grid grid-cols-3 gap-2">
+                            <button aria-label="Move exercise up" className="rounded-xl bg-white text-plum ring-1 ring-silk" onClick={() => moveExercise(day.id, exercise.id, -1)} type="button">
+                              <ChevronUp className="mx-auto" size={17} />
+                            </button>
+                            <button aria-label="Move exercise down" className="rounded-xl bg-white text-plum ring-1 ring-silk" onClick={() => moveExercise(day.id, exercise.id, 1)} type="button">
+                              <ChevronDown className="mx-auto" size={17} />
+                            </button>
+                            <button aria-label="Remove exercise" className="rounded-xl bg-[#fff0f4] text-[#a93f5b] ring-1 ring-[#ffd2de]" onClick={() => removeExercise(day.id, exercise.id)} type="button">
+                              <X className="mx-auto" size={16} />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <Button className="mt-3" variant="soft" onClick={() => addExercise(day.id)}>
+                      <Plus size={17} /> Add Exercise
+                    </Button>
                   </div>
-                </div>
-              ))}
-            </div>
-            <Button className="mt-3" variant="soft" onClick={() => addExercise(day.id)}>
-              <Plus size={17} /> Add Exercise
-            </Button>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
-        ))}
+          );
+        })}
       </div>
     </Card>
   );
 }
-
 const Badge = ({ achievement }: { achievement: { title: string; tier: string; earnedAt?: string } }) => (
   <span className={`inline-flex items-center gap-2 rounded-full px-3 py-2 text-xs font-black ${achievement.earnedAt ? "bg-gradient-to-r from-lavender to-mauve text-white shadow-glow" : "bg-mist text-[#75677f]"}`}>
     <Trophy size={14} /> {achievement.title}
