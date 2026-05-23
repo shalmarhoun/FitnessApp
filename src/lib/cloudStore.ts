@@ -104,7 +104,8 @@ export const upsertProfile = async (user: User) => {
   if (data) return data as CloudProfile;
 
   if (email === ownerEmail) {
-    return { id: user.id, email, display_name: null, role: "owner", assigned_owner_id: null };
+    const ownerProfile: CloudProfile = { id: user.id, email, display_name: null, role: "owner", assigned_owner_id: null };
+    return ownerProfile;
   }
 
   throw new Error("This account is not invited yet. Ask the owner to create it from Settings.");
