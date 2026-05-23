@@ -95,26 +95,19 @@ export const signOutCloud = async () => {
 export const upsertProfile = async (user: User) => {
   if (!supabase) return null;
   const email = user.email?.toLowerCase() ?? null;
-  const ownerRole = email === ownerEmail;
-
-  if (!ownerRole) {
-    const { data: existing, error: existingError } = await supabase
-      .from("profiles")
-      .select("id,email,display_name,role,assigned_owner_id")
-      .eq("id", user.id)
-      .maybeSingle();
-    if (existingError) throw existingError;
-    if (existing) return existing as CloudProfile;
-  }
-
-  const role: CloudRole = ownerRole ? "owner" : "viewer";
   const { data, error } = await supabase
     .from("profiles")
-    .upsert({ id: user.id, email, role }, { onConflict: "id" })
     .select("id,email,display_name,role,assigned_owner_id")
-    .single();
+    .eq("id", user.id)
+    .maybeSingle();
   if (error) throw error;
-  return data as CloudProfile;
+  if (data) return data as CloudProfile;
+
+  if (email === ownerEmail) {
+    return { id: user.id, email, display_name: null, role: "owner", assigned_owner_id: null };
+  }
+
+  throw new Error("This account is not invited yet. Ask the owner to create it from Settings.");
 };
 
 export const loadCloudSnapshot = async (userId: string) => {

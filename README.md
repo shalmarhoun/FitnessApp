@@ -102,3 +102,5 @@ This project includes `vercel.json`. Vite uses `/` as the base path on Vercel an
 Deployment trigger: Vercel should build every new push to `main`.
 
 Auth gate cache marker: 2026-05-23.
+
+Profile sync mode: read-only client profile lookup.

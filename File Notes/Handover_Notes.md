@@ -176,6 +176,7 @@ Current backend state:
 - Login email fields intentionally start empty; owner email is not prefilled.
 - Fixed profiles RLS recursion that caused `Unable to connect to Supabase` after a successful password sign-in.
 - Fixed remaining profiles write-policy recursion and added a login-screen `Clear saved session` action.
+- Client profile sync no longer writes to `profiles`; it performs read-only lookup to avoid RLS write-policy recursion.
 
 ## Current Quality Notes
 - Before saying done, build or verify when dependencies are available.
