@@ -67,22 +67,29 @@ import {
 } from "./data";
 import type { ActiveSession, AppData, LoggedExercise, MeasurementEntry, ProgramDay, ProgramExercise, Weekday, WorkoutSession } from "./types";
 import {
+  canManageAI,
+  canManageUsers,
   createPasswordUser,
   canEditProgram,
+  canUploadInBody,
   emptyCloudState,
   getCurrentSession,
   getCloudOwnerId,
   isOwnerProfile,
+  listAIReports,
+  listInBodyReports,
   listPermissionInvites,
   loadCloudSnapshot,
-  ownerEmail,
   resetCloudPassword,
+  revokePasswordUser,
   saveCloudSnapshot,
   saveWorkoutSessionRows,
   signInWithPassword,
   signOutCloud,
   subscribeToAuth,
+  uploadInBodyReport,
   upsertProfile,
+  type CloudRole,
   type CloudState,
 } from "./lib/cloudStore";
 
@@ -125,6 +132,11 @@ const nextWorkoutFromDate = (programDays: ProgramDay[], date: Date) => {
   }
   return null;
 };
+
+const dataForRole = (appData: AppData, ownerPrivate: boolean): AppData => ({
+  ...appData,
+  aiReports: ownerPrivate ? appData.aiReports ?? [] : (appData.aiReports ?? []).filter((report) => report.visibility === "shared_analytics"),
+});
 
 const loadActiveSession = (): ActiveSession | null => {
   try {
@@ -252,12 +264,20 @@ function App() {
         const snapshot = await loadCloudSnapshot(ownerId);
         if (!mounted) return;
         if (snapshot?.app_data?.meta) {
-          const cloudTime = new Date(snapshot.app_data.meta.updatedAt).getTime();
+          const safeSnapshot = dataForRole(snapshot.app_data, isOwnerProfile(profile, session.user));
+          const cloudTime = new Date(safeSnapshot.meta.updatedAt).getTime();
           const localTime = new Date(data.meta.updatedAt).getTime();
-          if (cloudTime > localTime) setData(snapshot.app_data);
+          if (cloudTime > localTime) setData(safeSnapshot);
           else if (canEditProgram(profile, session.user)) await saveCloudSnapshot(ownerId, data);
         } else {
           if (canEditProgram(profile, session.user)) await saveCloudSnapshot(ownerId, data);
+        }
+        const [inbodyReports, aiReports] = await Promise.all([
+          listInBodyReports(ownerId).catch(() => []),
+          listAIReports(ownerId).catch(() => []),
+        ]);
+        if (mounted && (inbodyReports.length || aiReports.length)) {
+          setData((current) => dataForRole({ ...current, inbodyReports, aiReports }, isOwnerProfile(profile, session.user)));
         }
         const permissions = profile && isOwnerProfile(profile, session.user) ? await listPermissionInvites(session.user.id) : [];
         if (!mounted) return;
@@ -398,8 +418,9 @@ function App() {
     setView("home");
   };
 
-  const authenticated = Boolean(cloud.user && cloud.profile && cloud.ownerId);
+  const authenticated = Boolean(cloud.user && cloud.profile && cloud.ownerId && !cloud.profile.disabled_at);
   const editableProgram = canEditProgram(cloud.profile, cloud.user);
+  const ownerSignedIn = isOwnerProfile(cloud.profile, cloud.user);
 
   return (
     <div className="min-h-screen pb-28 text-[#241b2f] md:pb-10">
@@ -412,7 +433,7 @@ function App() {
             <div className="mx-auto w-full max-w-5xl px-3 py-4 sm:px-4 sm:py-5 md:px-8 md:py-6">
               <main className="min-w-0 flex-1">
                 <AnimatePresence mode="wait">
-                  {view === "home" && <Dashboard key="home" data={data} selectedDate={selectedDate} selectedWorkout={selectedWorkout} startWorkout={startWorkout} setView={setView} openCalendar={() => setCalendarOpen(true)} />}
+                  {view === "home" && <Dashboard key="home" data={data} selectedDate={selectedDate} selectedWorkout={selectedWorkout} startWorkout={startWorkout} setView={setView} openCalendar={() => setCalendarOpen(true)} canStartWorkout={ownerSignedIn} />}
                   {view === "workout" && (
                     <Workout
                       key="workout"
@@ -426,15 +447,16 @@ function App() {
                       setCompletedSession={setCompletedSession}
                       updateData={updateData}
                       setView={setView}
+                      canStartWorkout={ownerSignedIn}
                     />
                   )}
                   {view === "progress" && <Progress key="progress" data={data} />}
-                  {view === "measurements" && <Measurements key="measurements" data={data} updateData={updateData} />}
+                  {view === "measurements" && <Measurements key="measurements" data={data} updateData={ownerSignedIn ? updateData : () => undefined} />}
                   {view === "settings" && <SettingsScreen key="settings" data={data} updateData={updateData} setData={setData} cloud={cloud} setCloud={setCloud} canEditProgram={editableProgram} />}
                 </AnimatePresence>
               </main>
             </div>
-            <MobileNav view={view} setView={setView} startWorkout={() => actualTodayWorkout ? startWorkout(actualTodayWorkout) : setView("measurements")} hasActiveSession={Boolean(activeSession)} hasTodayWorkout={Boolean(actualTodayWorkout)} />
+            <MobileNav view={view} setView={setView} startWorkout={() => ownerSignedIn && actualTodayWorkout ? startWorkout(actualTodayWorkout) : setView(actualTodayWorkout ? "workout" : "measurements")} hasActiveSession={Boolean(activeSession)} hasTodayWorkout={Boolean(actualTodayWorkout)} canStartWorkout={ownerSignedIn} />
             <AnimatePresence>
               {calendarOpen && (
                 <CalendarSheet
@@ -466,12 +488,14 @@ const MobileNav = ({
   startWorkout,
   hasActiveSession,
   hasTodayWorkout,
+  canStartWorkout,
 }: {
   view: View;
   setView: (view: View) => void;
   startWorkout: () => void;
   hasActiveSession: boolean;
   hasTodayWorkout: boolean;
+  canStartWorkout: boolean;
 }) => (
   <nav className="glass fixed bottom-3 left-4 right-4 z-40 mx-auto grid max-w-xl grid-cols-6 items-center rounded-[30px] p-2 md:-bottom-5">
     {navItems.slice(0, 2).map((item) => (
@@ -490,7 +514,7 @@ const MobileNav = ({
       <span className="-mt-7 mb-1 flex h-14 w-14 items-center justify-center rounded-full bg-lavender shadow-glow ring-8 ring-white/70">
         {hasActiveSession ? <Timer size={25} /> : hasTodayWorkout ? <Plus size={28} /> : <Ruler size={25} />}
       </span>
-      {hasActiveSession ? "Live" : hasTodayWorkout ? "Start" : "Measure"}
+      {hasActiveSession ? "Live" : hasTodayWorkout && canStartWorkout ? "Start" : hasTodayWorkout ? "Plan" : "Measure"}
     </button>
     {navItems.slice(2).map((item) => (
       <button
@@ -679,6 +703,7 @@ function Dashboard({
   startWorkout,
   setView,
   openCalendar,
+  canStartWorkout,
 }: {
   data: AppData;
   selectedDate: Date;
@@ -686,6 +711,7 @@ function Dashboard({
   startWorkout: (day?: ProgramDay) => void;
   setView: (view: View) => void;
   openCalendar: () => void;
+  canStartWorkout: boolean;
 }) {
   const weekSessions = sameWeekSessions(data.sessions, selectedDate);
   const weeklyDone = new Set(weekSessions.map((session) => session.scheduledWeekday));
@@ -731,8 +757,8 @@ function Dashboard({
                 <span className="flex items-center gap-3"><Dumbbell className="text-lavender" size={20} /> {selectedWorkout.exercises.length} Exercises</span>
                 <span className="flex items-center gap-3"><Heart className="text-lavender" size={20} /> Focus: Strength</span>
               </div>
-              <Button className="mt-6 h-14 w-full rounded-[24px] text-base md:max-w-md" onClick={() => startWorkout(selectedWorkout)}>
-                Start Workout <ArrowRight className="ml-auto" size={24} />
+              <Button className="mt-6 h-14 w-full rounded-[24px] text-base md:max-w-md" onClick={() => canStartWorkout ? startWorkout(selectedWorkout) : setView("workout")}>
+                {canStartWorkout ? "Start Workout" : "View Workout Plan"} <ArrowRight className="ml-auto" size={24} />
               </Button>
             </div>
             <div className="hidden justify-self-end md:block">
@@ -909,6 +935,7 @@ function Workout({
   setCompletedSession,
   updateData,
   setView,
+  canStartWorkout,
 }: {
   data: AppData;
   activeSession: ActiveSession | null;
@@ -920,6 +947,7 @@ function Workout({
   setCompletedSession: (session: WorkoutSession | null) => void;
   updateData: (updater: (data: AppData) => AppData) => void;
   setView: (view: View) => void;
+  canStartWorkout: boolean;
 }) {
   if (completedSession) {
     return <WorkoutSummary session={completedSession} previous={latestPreviousSession(data.sessions.filter((item) => item.id !== completedSession.id), completedSession.programDayId)} updateData={updateData} setCompletedSession={setCompletedSession} />;
@@ -928,15 +956,15 @@ function Workout({
   if (!activeSession) {
     return (
       <motion.div {...pageMotion}>
-        <Header eyebrow="FITNESS SM" title="Choose a ritual to begin." action={<BrandMark size="md" />} />
+        <Header eyebrow="FITNESS SM" title={canStartWorkout ? "Choose a ritual to begin." : "Workout program view."} action={<BrandMark size="md" />} />
         <div className="grid gap-4 md:grid-cols-3">
           {data.program.days.map((day) => (
             <Card key={day.id}>
               <p className="text-xs font-black uppercase text-lavender">{day.weekday}</p>
               <h2 className="mt-1 text-xl font-black text-ink">{day.title}</h2>
               <p className="mt-2 text-sm font-semibold text-[#75677f]">{day.exercises.length} exercises</p>
-              <Button className="mt-5 w-full" onClick={() => startWorkout(day)}>
-                <Play size={17} /> Start
+              <Button className="mt-5 w-full" onClick={() => canStartWorkout ? startWorkout(day) : undefined} disabled={!canStartWorkout}>
+                {canStartWorkout ? <Play size={17} /> : <Eye size={17} />} {canStartWorkout ? "Start" : "Read Only"}
               </Button>
             </Card>
           ))}
@@ -1389,6 +1417,9 @@ function SettingsScreen({
   const fileRef = useRef<HTMLInputElement>(null);
   const [showPermissions, setShowPermissions] = useState(false);
   const ownerSignedIn = isOwnerProfile(cloud.profile, cloud.user);
+  const userManagementEnabled = canManageUsers(cloud.profile, cloud.user);
+  const inbodyEnabled = canUploadInBody(cloud.profile, cloud.user);
+  const aiManagementEnabled = canManageAI(cloud.profile, cloud.user);
 
   const exportBackup = () => {
     const backup = {
@@ -1436,7 +1467,7 @@ function SettingsScreen({
 
   return (
     <motion.div {...pageMotion}>
-      <Header eyebrow="FITNESS SM" title="Program, backups, and preferences." action={<BrandMark size="md" />} />
+      <Header eyebrow="FITNESS SM" title="Settings and intelligence control center." action={<BrandMark size="md" />} />
       <div className="grid gap-5 xl:grid-cols-[1.2fr_0.8fr]">
         {canEditProgram ? (
           <ProgramEditor data={data} updateData={updateData} />
@@ -1448,18 +1479,27 @@ function SettingsScreen({
           </Card>
         )}
         <div className="space-y-5">
+          <SettingsSectionTitle title="Account Management" description="Authentication, account state, and cloud sync." />
           <CloudAccountCard cloud={cloud} setCloud={setCloud} data={data} />
-          {ownerSignedIn && (
+          {userManagementEnabled && (
+            <SettingsSectionTitle title="User Access & Roles" description="Owner-only controls for admin, coach, and viewer accounts." />
+          )}
+          {userManagementEnabled && (
             <Card className="bg-gradient-to-br from-white via-[#fffaff] to-[#f4edff]">
               <p className="flex items-center gap-2 text-xs font-black uppercase text-lavender"><ShieldCheck size={16} /> Owner Control</p>
-              <h2 className="mt-1 text-xl font-black text-ink">Private permissions area.</h2>
-              <p className="mt-2 text-sm font-semibold text-[#75677f]">Only the owner account can see this control.</p>
+              <h2 className="mt-1 text-xl font-black text-ink">Private access management.</h2>
+              <p className="mt-2 text-sm font-semibold text-[#75677f]">Only the owner can create accounts, assign roles, and revoke access.</p>
               <Button className="mt-5 w-full" onClick={() => setShowPermissions((value) => !value)}>
-                <Users size={17} /> {showPermissions ? "Hide Permissions" : "Open Permissions"}
+                <Users size={17} /> {showPermissions ? "Hide Roles" : "Open Roles"}
               </Button>
             </Card>
           )}
-          {ownerSignedIn && showPermissions && <PermissionsCard cloud={cloud} setCloud={setCloud} />}
+          {userManagementEnabled && showPermissions && <PermissionsCard cloud={cloud} setCloud={setCloud} />}
+          <SettingsSectionTitle title="InBody Intelligence" description="Upload reports, preserve files, and chart body composition history." />
+          <InBodyIntelligenceCard data={data} updateData={updateData} cloud={cloud} canUpload={inbodyEnabled} />
+          <SettingsSectionTitle title="AI Reports & Privacy" description="Owner-private critique stays hidden from coach and viewer roles." />
+          <AIPrivacyCard data={data} updateData={updateData} ownerPrivate={ownerSignedIn} canManage={aiManagementEnabled} />
+          <SettingsSectionTitle title="Backup & Export" description="Manual JSON safety net remains available." />
           <Card>
             <p className="text-xs font-black uppercase text-[#75677f]">Backup</p>
             <h2 className="mt-1 text-xl font-black text-ink">Your data stays yours.</h2>
@@ -1475,12 +1515,22 @@ function SettingsScreen({
             </div>
           </Card>
           <Card>
+            <p className="text-xs font-black uppercase text-[#75677f]">App Preferences</p>
+            <h2 className="mt-1 text-xl font-black text-ink">Training rhythm.</h2>
+            <div className="mt-3 grid gap-2 text-sm font-bold text-[#75677f]">
+              <p>Week starts on Sunday.</p>
+              <p>Default rest timer: {data.preferences.defaultRestSeconds} sec.</p>
+              <p>Training days: {data.preferences.trainingDays.join(", ")}.</p>
+            </div>
+          </Card>
+          <Card>
             <p className="text-xs font-black uppercase text-[#75677f]">Achievements</p>
             <div className="mt-3 flex flex-wrap gap-2">
               {data.achievements.map((achievement) => <Badge key={achievement.id} achievement={achievement} />)}
             </div>
           </Card>
           <Card>
+            <p className="mb-3 text-xs font-black uppercase text-[#75677f]">Security Settings</p>
             <Button variant="danger" className="w-full" onClick={resetData}>
               <RotateCcw size={17} /> Reset Local Data
             </Button>
@@ -1592,11 +1642,208 @@ function CloudAccountCard({ cloud, setCloud, data }: { cloud: CloudState; setClo
   );
 }
 
+const SettingsSectionTitle = ({ title, description }: { title: string; description: string }) => (
+  <div className="px-1 pt-1">
+    <p className="text-xs font-black uppercase tracking-[0.16em] text-lavender">{title}</p>
+    <p className="mt-1 text-sm font-semibold text-[#75677f]">{description}</p>
+  </div>
+);
+
+function InBodyIntelligenceCard({
+  data,
+  updateData,
+  cloud,
+  canUpload,
+}: {
+  data: AppData;
+  updateData: (updater: (data: AppData) => AppData) => void;
+  cloud: CloudState;
+  canUpload: boolean;
+}) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [form, setForm] = useState({
+    reportDate: dateKey(new Date()),
+    weight: "",
+    skeletalMuscleMass: "",
+    bodyFatPercentage: "",
+    bodyFatMass: "",
+    bmi: "",
+    metabolicRate: "",
+    notes: "",
+  });
+  const sorted = [...(data.inbodyReports ?? [])].sort((a, b) => new Date(a.reportDate).getTime() - new Date(b.reportDate).getTime());
+  const chartData = sorted.map((report) => ({
+    date: new Date(report.reportDate).toLocaleDateString("en", { month: "short", day: "numeric" }),
+    weight: report.weight,
+    bodyFat: report.bodyFatPercentage,
+    muscle: report.skeletalMuscleMass,
+  }));
+
+  const uploadReport = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file || !cloud.ownerId) return;
+    setBusy(true);
+    try {
+      const report = await uploadInBodyReport(cloud.ownerId, file, {
+        reportDate: form.reportDate,
+        weight: form.weight ? Number(form.weight) : undefined,
+        skeletalMuscleMass: form.skeletalMuscleMass ? Number(form.skeletalMuscleMass) : undefined,
+        bodyFatPercentage: form.bodyFatPercentage ? Number(form.bodyFatPercentage) : undefined,
+        bodyFatMass: form.bodyFatMass ? Number(form.bodyFatMass) : undefined,
+        bmi: form.bmi ? Number(form.bmi) : undefined,
+        metabolicRate: form.metabolicRate ? Number(form.metabolicRate) : undefined,
+        notes: form.notes || undefined,
+      });
+      updateData((current) => ({ ...current, inbodyReports: [report, ...(current.inbodyReports ?? [])] }));
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "Unable to upload InBody report.");
+    } finally {
+      setBusy(false);
+      event.target.value = "";
+    }
+  };
+
+  return (
+    <Card>
+      <p className="flex items-center gap-2 text-xs font-black uppercase text-[#75677f]"><Activity size={16} /> InBody Archive</p>
+      <h2 className="mt-1 text-xl font-black text-ink">Body composition memory.</h2>
+      <p className="mt-2 text-sm font-semibold text-[#75677f]">Reports are stored in private Supabase Storage and tracked as a timeline.</p>
+      <div className="mt-4 grid gap-2 sm:grid-cols-2">
+        {[
+          ["reportDate", "Report Date", "date"],
+          ["weight", "Weight", "number"],
+          ["skeletalMuscleMass", "Skeletal Muscle", "number"],
+          ["bodyFatPercentage", "Body Fat %", "number"],
+          ["bodyFatMass", "Body Fat Mass", "number"],
+          ["bmi", "BMI", "number"],
+        ].map(([key, label, type]) => (
+          <label className="grid gap-1 text-[10px] font-black uppercase tracking-[0.12em] text-[#75677f]" key={key}>
+            {label}
+            <input
+              className="h-11 rounded-2xl border border-silk bg-white/85 px-3 text-sm font-bold normal-case tracking-normal outline-none focus:ring-2 focus:ring-lilac"
+              type={type}
+              value={form[key as keyof typeof form]}
+              onChange={(event) => setForm((current) => ({ ...current, [key]: event.target.value }))}
+            />
+          </label>
+        ))}
+      </div>
+      <label className="mt-3 grid gap-1 text-[10px] font-black uppercase tracking-[0.12em] text-[#75677f]">
+        Notes
+        <textarea className="min-h-20 rounded-2xl border border-silk bg-white/85 px-3 py-3 text-sm font-bold normal-case tracking-normal outline-none focus:ring-2 focus:ring-lilac" value={form.notes} onChange={(event) => setForm((current) => ({ ...current, notes: event.target.value }))} />
+      </label>
+      <div className="mt-4 grid gap-3">
+        <Button onClick={() => fileRef.current?.click()} disabled={!canUpload || busy || !cloud.ownerId}>
+          <Upload size={17} /> Upload Image or PDF
+        </Button>
+        <input ref={fileRef} className="hidden" type="file" accept="image/png,image/jpeg,image/webp,application/pdf" onChange={uploadReport} />
+        {!canUpload && <p className="rounded-2xl bg-mist px-4 py-3 text-xs font-bold text-plum">Your role can view InBody history but cannot upload reports.</p>}
+      </div>
+      <div className="mt-5 h-44">
+        {chartData.length ? (
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={chartData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#EFE6FF" />
+              <XAxis dataKey="date" tick={{ fill: "#75677f", fontSize: 11 }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fill: "#75677f", fontSize: 11 }} axisLine={false} tickLine={false} />
+              <Tooltip contentStyle={{ borderRadius: 16, borderColor: "#E8DEFF" }} />
+              <Line dataKey="weight" stroke="#8F6FE8" strokeWidth={3} dot={false} />
+              <Line dataKey="bodyFat" stroke="#F5A9C3" strokeWidth={3} dot={false} />
+              <Line dataKey="muscle" stroke="#A8C7B5" strokeWidth={3} dot={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        ) : (
+          <div className="flex h-full items-center justify-center rounded-2xl bg-mist text-center text-sm font-bold text-[#75677f]">Upload your first InBody report to unlock body composition trends.</div>
+        )}
+      </div>
+      <div className="mt-4 space-y-2">
+        {(data.inbodyReports ?? []).slice(0, 3).map((report) => (
+          <div className="rounded-2xl bg-white/75 p-3 ring-1 ring-silk" key={report.id}>
+            <div className="flex items-center justify-between gap-3">
+              <p className="truncate text-sm font-black text-ink">{report.fileName}</p>
+              <span className="rounded-full bg-mist px-2 py-1 text-[10px] font-black uppercase text-lavender">{report.fileType}</span>
+            </div>
+            <p className="mt-1 text-xs font-bold text-[#75677f]">{formatDisplayDate(new Date(report.reportDate))}</p>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+const AIPrivacyCard = ({
+  data,
+  updateData,
+  ownerPrivate,
+  canManage,
+}: {
+  data: AppData;
+  updateData: (updater: (data: AppData) => AppData) => void;
+  ownerPrivate: boolean;
+  canManage: boolean;
+}) => {
+  const reports = ownerPrivate ? data.aiReports ?? [] : (data.aiReports ?? []).filter((report) => report.visibility === "shared_analytics");
+  const generateReport = () => {
+    const recentSessions = data.sessions.slice(0, 6);
+    const recentVolume = recentSessions.reduce((sum, session) => sum + session.totalVolume, 0);
+    const averageDuration = recentSessions.length
+      ? Math.round(recentSessions.reduce((sum, session) => sum + session.durationSeconds, 0) / recentSessions.length / 60)
+      : 0;
+    const report = {
+      id: uid(),
+      createdAt: new Date().toISOString(),
+      reportType: "progress" as const,
+      title: "Private Progress Intelligence",
+      summary: recentSessions.length
+        ? `Recent training shows ${Math.round(recentVolume).toLocaleString()} total volume across ${recentSessions.length} sessions with an average duration of ${averageDuration} minutes.`
+        : "Not enough completed sessions yet. Finish a few workouts to unlock stronger trend detection.",
+      recommendations: [
+        "Keep program changes intentional and approve them manually.",
+        "Watch repeated dips in volume before increasing load.",
+        "Use InBody trends as context, not as a daily judgment.",
+      ],
+      visibility: "owner_private" as const,
+      sourceIds: recentSessions.map((session) => session.id),
+      approvedProgramChange: false,
+    };
+    updateData((current) => ({ ...current, aiReports: [report, ...(current.aiReports ?? [])] }));
+  };
+  return (
+    <Card>
+      <p className="flex items-center gap-2 text-xs font-black uppercase text-[#75677f]"><Sparkles size={16} /> AI Intelligence</p>
+      <h2 className="mt-1 text-xl font-black text-ink">Recommendations never auto-edit plans.</h2>
+      <p className="mt-2 text-sm font-semibold text-[#75677f]">AI critique is owner-private. Coaches and viewers only see shared analytics.</p>
+      <div className="mt-4 grid gap-2">
+        {reports.length ? reports.slice(0, 3).map((report) => (
+          <div className="rounded-2xl bg-white/75 p-3 ring-1 ring-silk" key={report.id}>
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm font-black text-ink">{report.title}</p>
+              <span className="rounded-full bg-mist px-2 py-1 text-[10px] font-black uppercase text-lavender">{report.visibility === "owner_private" ? "Private" : "Shared"}</span>
+            </div>
+            <p className="mt-1 text-xs font-bold text-[#75677f]">{report.summary}</p>
+          </div>
+        )) : (
+          <div className="rounded-2xl bg-mist p-4 text-sm font-bold text-[#75677f]">AI reports will appear here after enough workout, measurement, and InBody history exists.</div>
+        )}
+      </div>
+      {ownerPrivate && (
+        <Button className="mt-4 w-full" variant="soft" onClick={generateReport} disabled={!canManage}>
+          <Sparkles size={17} /> Generate Private Insight
+        </Button>
+      )}
+      <p className="mt-4 rounded-2xl bg-[#fff8fc] px-4 py-3 text-xs font-bold text-plum">
+        {canManage ? "AI management is enabled for this role, but program changes still require explicit owner approval." : "This role cannot manage AI privacy or private recommendations."}
+      </p>
+    </Card>
+  );
+};
+
 function PermissionsCard({ cloud, setCloud }: { cloud: CloudState; setCloud: React.Dispatch<React.SetStateAction<CloudState>> }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [role, setRole] = useState<"coach" | "viewer">("coach");
+  const [role, setRole] = useState<Exclude<CloudRole, "owner">>("coach");
   const [busy, setBusy] = useState(false);
 
   const invite = async () => {
@@ -1610,6 +1857,20 @@ function PermissionsCard({ cloud, setCloud }: { cloud: CloudState; setCloud: Rea
       setPassword("");
     } catch (error) {
       setCloud((current) => ({ ...current, status: "error", message: error instanceof Error ? error.message : "Unable to create account." }));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const revoke = async (targetEmail: string, targetRole: Exclude<CloudRole, "owner">) => {
+    if (!cloud.user || !window.confirm(`Revoke access for ${targetEmail}?`)) return;
+    setBusy(true);
+    try {
+      await revokePasswordUser(targetEmail, targetRole);
+      const permissions = await listPermissionInvites(cloud.user.id);
+      setCloud((current) => ({ ...current, permissions, status: "synced", message: "Access revoked." }));
+    } catch (error) {
+      setCloud((current) => ({ ...current, status: "error", message: error instanceof Error ? error.message : "Unable to revoke access." }));
     } finally {
       setBusy(false);
     }
@@ -1634,8 +1895,8 @@ function PermissionsCard({ cloud, setCloud }: { cloud: CloudState; setCloud: Rea
             </button>
           </div>
         </label>
-        <div className="grid grid-cols-2 gap-2">
-          {(["coach", "viewer"] as const).map((item) => (
+        <div className="grid grid-cols-3 gap-2">
+          {(["admin", "coach", "viewer"] as const).map((item) => (
             <button className={`rounded-2xl px-3 py-3 text-sm font-black capitalize ${role === item ? "bg-lavender text-white shadow-glow" : "bg-white/75 text-plum ring-1 ring-silk"}`} key={item} type="button" onClick={() => setRole(item)}>
               {item}
             </button>
@@ -1657,7 +1918,15 @@ function PermissionsCard({ cloud, setCloud }: { cloud: CloudState; setCloud: Rea
                 {permission.can_view_logs && <span className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1"><Eye size={12} /> Logs</span>}
                 {permission.can_edit_program && <span className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1"><Edit3 size={12} /> Program</span>}
                 {permission.can_view_measurements && <span className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1"><Ruler size={12} /> Measures</span>}
+                {permission.can_manage_users && <span className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1"><ShieldCheck size={12} /> Users</span>}
+                {permission.can_upload_inbody && <span className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-1"><Upload size={12} /> InBody</span>}
+                {permission.revoked_at && <span className="inline-flex items-center gap-1 rounded-full bg-[#fff0f4] px-2 py-1 text-[#a93f5b]">Revoked</span>}
               </div>
+              {!permission.revoked_at && (
+                <Button variant="danger" className="mt-3 min-h-10 w-full rounded-xl text-xs" onClick={() => revoke(permission.email, permission.role)} disabled={busy}>
+                  <X size={14} /> Revoke Access
+                </Button>
+              )}
             </div>
           ))
         ) : (
@@ -1705,13 +1974,49 @@ function ProgramEditor({ data, updateData }: { data: AppData; updateData: (updat
                 ...day,
                 exercises: [
                   ...day.exercises,
-                  { id: uid(), name: "New Exercise", targetSets: 3, targetReps: 10, defaultWeight: 0, unit: "kg" },
+                  { id: uid(), name: "New Exercise", targetSets: 3, targetReps: 10, defaultWeight: 0, unit: "kg", restSeconds: 90 },
                 ],
               }
             : day,
         ),
       },
     }));
+
+  const addDay = () =>
+    updateData((current) => {
+      const used = new Set(current.program.days.map((day) => day.weekday));
+      const weekday = weekdays.find((day) => !used.has(day)) ?? "Sunday";
+      const nextDay: ProgramDay = { id: uid(), title: "New Training Day", weekday, warmup: [], exercises: [] };
+      return {
+        ...current,
+        preferences: { ...current.preferences, trainingDays: [...current.preferences.trainingDays, weekday] },
+        program: { ...current.program, days: [...current.program.days, nextDay] },
+      };
+    });
+
+  const removeDay = (dayId: string) =>
+    updateData((current) => {
+      const target = current.program.days.find((day) => day.id === dayId);
+      return {
+        ...current,
+        preferences: {
+          ...current.preferences,
+          trainingDays: target ? current.preferences.trainingDays.filter((weekday) => weekday !== target.weekday) : current.preferences.trainingDays,
+        },
+        program: { ...current.program, days: current.program.days.filter((day) => day.id !== dayId) },
+      };
+    });
+
+  const moveDay = (dayId: string, direction: -1 | 1) =>
+    updateData((current) => {
+      const index = current.program.days.findIndex((day) => day.id === dayId);
+      const nextIndex = index + direction;
+      if (index < 0 || nextIndex < 0 || nextIndex >= current.program.days.length) return current;
+      const days = [...current.program.days];
+      const [moved] = days.splice(index, 1);
+      days.splice(nextIndex, 0, moved);
+      return { ...current, program: { ...current.program, days } };
+    });
 
   const removeExercise = (dayId: string, exerciseId: string) =>
     updateData((current) => ({
@@ -1744,23 +2049,41 @@ function ProgramEditor({ data, updateData }: { data: AppData; updateData: (updat
 
   return (
     <Card>
-      <p className="text-xs font-black uppercase text-[#75677f]">Editable Program</p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-xs font-black uppercase text-[#75677f]">Workout Program Management</p>
+          <h2 className="mt-1 text-xl font-black text-ink">Weekly structure with immutable history.</h2>
+        </div>
+        <Button variant="soft" onClick={addDay}><Plus size={17} /> Add Day</Button>
+      </div>
       <div className="mt-4 space-y-5">
         {data.program.days.map((day) => (
           <div className="rounded-[20px] border border-silk bg-white/65 p-4" key={day.id}>
-            <div className="grid gap-3 md:grid-cols-[1fr_160px]">
-              <input className="h-12 rounded-2xl border border-silk bg-white px-4 text-sm font-black outline-none focus:ring-2 focus:ring-lilac" value={day.title} onChange={(event) => updateDay(day.id, { title: event.target.value })} />
-              <select className="h-12 rounded-2xl border border-silk bg-white px-4 text-sm font-black outline-none" value={day.weekday} onChange={(event) => updateDay(day.id, { weekday: event.target.value as Weekday })}>
-                {weekdays.map((weekday) => <option key={weekday}>{weekday}</option>)}
-              </select>
+            <div className="grid gap-3 md:grid-cols-[1fr_160px_132px]">
+              <label className="grid gap-1 text-[10px] font-black uppercase tracking-[0.12em] text-[#75677f]">
+                Workout Title
+                <input className="h-12 rounded-2xl border border-silk bg-white px-4 text-sm font-black normal-case tracking-normal outline-none focus:ring-2 focus:ring-lilac" value={day.title} onChange={(event) => updateDay(day.id, { title: event.target.value })} />
+              </label>
+              <label className="grid gap-1 text-[10px] font-black uppercase tracking-[0.12em] text-[#75677f]">
+                Day
+                <select className="h-12 rounded-2xl border border-silk bg-white px-4 text-sm font-black normal-case tracking-normal outline-none" value={day.weekday} onChange={(event) => updateDay(day.id, { weekday: event.target.value as Weekday })}>
+                  {weekdays.map((weekday) => <option key={weekday}>{weekday}</option>)}
+                </select>
+              </label>
+              <div className="grid grid-cols-3 gap-2 pt-5">
+                <button aria-label="Move day up" className="rounded-xl bg-white text-plum ring-1 ring-silk" onClick={() => moveDay(day.id, -1)} type="button"><ChevronUp className="mx-auto" size={17} /></button>
+                <button aria-label="Move day down" className="rounded-xl bg-white text-plum ring-1 ring-silk" onClick={() => moveDay(day.id, 1)} type="button"><ChevronDown className="mx-auto" size={17} /></button>
+                <button aria-label="Remove day" className="rounded-xl bg-[#fff0f4] text-[#a93f5b] ring-1 ring-[#ffd2de]" onClick={() => removeDay(day.id)} type="button"><X className="mx-auto" size={16} /></button>
+              </div>
             </div>
             <div className="mt-3 space-y-3">
               {day.exercises.map((exercise) => (
-                <div className="grid gap-2 rounded-2xl bg-mist/60 p-3 md:grid-cols-[1fr_80px_80px_90px_160px]" key={exercise.id}>
-                  <input className="h-11 rounded-xl border border-silk bg-white px-3 text-sm font-bold outline-none" value={exercise.name} onChange={(event) => updateExercise(day.id, exercise.id, { name: event.target.value })} />
-                  <input className="h-11 rounded-xl border border-silk bg-white px-3 text-sm font-bold outline-none" type="number" value={exercise.targetSets} onChange={(event) => updateExercise(day.id, exercise.id, { targetSets: Number(event.target.value) })} />
-                  <input className="h-11 rounded-xl border border-silk bg-white px-3 text-sm font-bold outline-none" value={exercise.targetReps} onChange={(event) => updateExercise(day.id, exercise.id, { targetReps: event.target.value === "failure" ? "failure" : Number(event.target.value) })} />
-                  <input className="h-11 rounded-xl border border-silk bg-white px-3 text-sm font-bold outline-none" type="number" value={exercise.defaultWeight} onChange={(event) => updateExercise(day.id, exercise.id, { defaultWeight: Number(event.target.value) })} />
+                <div className="grid gap-2 rounded-2xl bg-mist/60 p-3 md:grid-cols-[1fr_72px_72px_82px_82px_152px]" key={exercise.id}>
+                  <label className="grid gap-1 text-[9px] font-black uppercase tracking-[0.1em] text-[#75677f]">Exercise<input className="h-11 rounded-xl border border-silk bg-white px-3 text-sm font-bold normal-case tracking-normal outline-none" value={exercise.name} onChange={(event) => updateExercise(day.id, exercise.id, { name: event.target.value })} /></label>
+                  <label className="grid gap-1 text-[9px] font-black uppercase tracking-[0.1em] text-[#75677f]">Sets<input className="h-11 rounded-xl border border-silk bg-white px-3 text-sm font-bold normal-case tracking-normal outline-none" type="number" value={exercise.targetSets} onChange={(event) => updateExercise(day.id, exercise.id, { targetSets: Number(event.target.value) })} /></label>
+                  <label className="grid gap-1 text-[9px] font-black uppercase tracking-[0.1em] text-[#75677f]">Reps<input className="h-11 rounded-xl border border-silk bg-white px-3 text-sm font-bold normal-case tracking-normal outline-none" value={exercise.targetReps} onChange={(event) => updateExercise(day.id, exercise.id, { targetReps: event.target.value === "failure" ? "failure" : Number(event.target.value) })} /></label>
+                  <label className="grid gap-1 text-[9px] font-black uppercase tracking-[0.1em] text-[#75677f]">Weight<input className="h-11 rounded-xl border border-silk bg-white px-3 text-sm font-bold normal-case tracking-normal outline-none" type="number" value={exercise.defaultWeight} onChange={(event) => updateExercise(day.id, exercise.id, { defaultWeight: Number(event.target.value) })} /></label>
+                  <label className="grid gap-1 text-[9px] font-black uppercase tracking-[0.1em] text-[#75677f]">Rest<input className="h-11 rounded-xl border border-silk bg-white px-3 text-sm font-bold normal-case tracking-normal outline-none" type="number" value={exercise.restSeconds ?? data.preferences.defaultRestSeconds} onChange={(event) => updateExercise(day.id, exercise.id, { restSeconds: Number(event.target.value) })} /></label>
                   <div className="grid grid-cols-3 gap-2">
                     <button aria-label="Move exercise up" className="rounded-xl bg-white text-plum ring-1 ring-silk" onClick={() => moveExercise(day.id, exercise.id, -1)} type="button">
                       <ChevronUp className="mx-auto" size={17} />

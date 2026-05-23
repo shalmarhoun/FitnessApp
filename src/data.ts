@@ -13,6 +13,7 @@ const exercise = (name: string, sets: number, reps: number | "failure", weight =
   targetReps: reps,
   defaultWeight: weight,
   unit,
+  restSeconds: 90,
 });
 
 export const defaultProgramDays: ProgramDay[] = [
@@ -91,6 +92,8 @@ export const createDefaultData = (): AppData => {
     },
     sessions: [],
     measurements: [],
+    inbodyReports: [],
+    aiReports: [],
     achievements: achievementCatalog,
   };
 };
@@ -105,6 +108,8 @@ export const loadData = (): AppData => {
     }
     return {
       ...parsed,
+      inbodyReports: parsed.inbodyReports ?? [],
+      aiReports: parsed.aiReports ?? [],
       achievements: achievementCatalog.map((achievement) => ({
         ...achievement,
         earnedAt: parsed.achievements?.find((item) => item.id === achievement.id)?.earnedAt,

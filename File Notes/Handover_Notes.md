@@ -158,6 +158,8 @@ Supabase migration files added locally:
 - `supabase/migrations/20260522203000_role_based_app_access.sql`
 - `supabase/migrations/20260522210000_fix_profiles_policy_recursion.sql`
 - `supabase/migrations/20260523093000_fix_profiles_write_policy_recursion.sql`
+- `supabase/migrations/20260523101500_inline_rls_without_helper_execute.sql`
+- `supabase/migrations/20260524090000_product_intelligence_platform.sql`
 - `api/admin-users.js`
 - `.env.example`
 
@@ -177,6 +179,11 @@ Current backend state:
 - Fixed profiles RLS recursion that caused `Unable to connect to Supabase` after a successful password sign-in.
 - Fixed remaining profiles write-policy recursion and added a login-screen `Clear saved session` action.
 - Client profile sync no longer writes to `profiles`; it performs read-only lookup to avoid RLS write-policy recursion.
+- Replaced RLS policies that called `is_owner` / `has_owner_permission` with inline authenticated-user checks, avoiding helper function execute grants.
+- Added product intelligence backend: `admin` role, private InBody Storage bucket, `inbody_reports`, `ai_reports`, and `app_audit_events`.
+- Settings is now a structured control center for account, roles, program management, InBody, AI/privacy, backup, preferences, and security.
+- Viewer access is read-only in the UI. Owner remains the only account-management role.
+- AI owner-private reports are filtered from non-owner snapshots in the frontend and protected by RLS in Supabase.
 
 ## Current Quality Notes
 - Before saying done, build or verify when dependencies are available.
@@ -186,8 +193,8 @@ Current backend state:
 - For Vercel, confirm `VERCEL` build uses `/` base.
 - Supabase project: `ezvwkqnyhlczlkrnhuhv`.
 - Supabase project URL: `https://ezvwkqnyhlczlkrnhuhv.supabase.co`.
-- Applied migrations: `initial_fitness_sm_backend`, `revoke_security_definer_rpc_access`, `password_invite_accounts`, `role_based_app_access`, `fix_profiles_policy_recursion`, `fix_profiles_write_policy_recursion`.
-- Supabase security advisors were checked after migrations and returned no lints.
+- Applied migrations: `initial_fitness_sm_backend`, `revoke_security_definer_rpc_access`, `password_invite_accounts`, `role_based_app_access`, `fix_profiles_policy_recursion`, `fix_profiles_write_policy_recursion`, `inline_rls_without_helper_execute`, `product_intelligence_platform`.
+- Supabase security advisors were checked after migrations. Remaining warning: leaked password protection is disabled in Supabase Auth.
 - Current blockers from 2026-05-22: local `node.exe` returns `Access is denied`; GitHub write access is blocked by integration permissions; Vercel env var `SUPABASE_SERVICE_ROLE_KEY` still needs to be added before owner-created accounts work in deployment.
 
 ## File Notes Rule

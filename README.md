@@ -77,7 +77,20 @@ supabase/migrations/20260522200000_password_invite_accounts.sql
 supabase/migrations/20260522203000_role_based_app_access.sql
 supabase/migrations/20260522210000_fix_profiles_policy_recursion.sql
 supabase/migrations/20260523093000_fix_profiles_write_policy_recursion.sql
+supabase/migrations/20260523101500_inline_rls_without_helper_execute.sql
+supabase/migrations/20260524090000_product_intelligence_platform.sql
 ```
+
+### Product Intelligence Upgrade
+
+The latest migration upgrades FITNESS SM from a private tracker into a personal fitness intelligence platform:
+
+- Adds `admin` alongside `owner`, `coach`, and `viewer`.
+- Adds private `inbody-reports` Supabase Storage bucket.
+- Adds `inbody_reports`, `ai_reports`, and `app_audit_events` tables.
+- Keeps AI program critique owner-private by default.
+- Preserves workout sessions as immutable saved snapshots through `raw_session`.
+- Keeps owner-only user creation and revocation through `api/admin-users.js`.
 
 Set these environment variables in Vercel:
 

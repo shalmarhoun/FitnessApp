@@ -1,10 +1,10 @@
 import type { Session, User } from "@supabase/supabase-js";
-import type { AppData, WorkoutSession } from "../types";
+import type { AIInsightReport, AppData, InBodyReport, WorkoutSession } from "../types";
 import { isSupabaseConfigured, ownerEmail, supabase } from "./supabaseClient";
 
 export { ownerEmail } from "./supabaseClient";
 
-export type CloudRole = "owner" | "coach" | "viewer";
+export type CloudRole = "owner" | "admin" | "coach" | "viewer";
 
 export type CloudProfile = {
   id: string;
@@ -12,6 +12,7 @@ export type CloudProfile = {
   display_name: string | null;
   role: CloudRole;
   assigned_owner_id?: string | null;
+  disabled_at?: string | null;
 };
 
 export type PermissionInvite = {
@@ -23,6 +24,11 @@ export type PermissionInvite = {
   can_edit_program: boolean;
   can_view_measurements: boolean;
   can_add_notes: boolean;
+  can_manage_users: boolean;
+  can_upload_inbody: boolean;
+  can_manage_ai: boolean;
+  disabled_at?: string | null;
+  revoked_at?: string | null;
   created_at: string;
 };
 
@@ -50,8 +56,18 @@ export const emptyCloudState: CloudState = {
 export const isOwnerProfile = (profile: CloudProfile | null, user: User | null) =>
   profile?.role === "owner" || user?.email?.toLowerCase() === ownerEmail;
 
+export const isAdminProfile = (profile: CloudProfile | null) => profile?.role === "admin";
+
 export const canEditProgram = (profile: CloudProfile | null, user: User | null) =>
-  isOwnerProfile(profile, user) || profile?.role === "coach";
+  isOwnerProfile(profile, user) || profile?.role === "admin" || profile?.role === "coach";
+
+export const canManageUsers = (profile: CloudProfile | null, user: User | null) => isOwnerProfile(profile, user);
+
+export const canUploadInBody = (profile: CloudProfile | null, user: User | null) =>
+  isOwnerProfile(profile, user) || profile?.role === "admin" || profile?.role === "coach";
+
+export const canManageAI = (profile: CloudProfile | null, user: User | null) =>
+  isOwnerProfile(profile, user) || profile?.role === "admin";
 
 export const getCloudOwnerId = (profile: CloudProfile | null, user: User | null) =>
   isOwnerProfile(profile, user) ? user?.id ?? null : profile?.assigned_owner_id ?? null;
@@ -97,14 +113,14 @@ export const upsertProfile = async (user: User) => {
   const email = user.email?.toLowerCase() ?? null;
   const { data, error } = await supabase
     .from("profiles")
-    .select("id,email,display_name,role,assigned_owner_id")
+    .select("id,email,display_name,role,assigned_owner_id,disabled_at")
     .eq("id", user.id)
     .maybeSingle();
   if (error) throw error;
   if (data) return data as CloudProfile;
 
   if (email === ownerEmail) {
-    const ownerProfile: CloudProfile = { id: user.id, email, display_name: null, role: "owner", assigned_owner_id: null };
+    const ownerProfile: CloudProfile = { id: user.id, email, display_name: null, role: "owner", assigned_owner_id: null, disabled_at: null };
     return ownerProfile;
   }
 
@@ -194,7 +210,7 @@ export const listPermissionInvites = async (ownerId: string) => {
   if (!supabase) return [];
   const { data, error } = await supabase
     .from("user_permissions")
-    .select("id,owner_id,email,role,can_view_logs,can_edit_program,can_view_measurements,can_add_notes,created_at")
+    .select("id,owner_id,email,role,can_view_logs,can_edit_program,can_view_measurements,can_add_notes,can_manage_users,can_upload_inbody,can_manage_ai,disabled_at,revoked_at,created_at")
     .eq("owner_id", ownerId)
     .order("created_at", { ascending: false });
   if (error) throw error;
@@ -212,13 +228,16 @@ export const createPermissionInvite = async (ownerId: string, email: string, rol
         email: normalizedEmail,
         role,
         can_view_logs: true,
-        can_edit_program: role === "coach",
-        can_view_measurements: role === "coach",
-        can_add_notes: role === "coach",
+        can_edit_program: role === "admin" || role === "coach",
+        can_view_measurements: role === "admin" || role === "coach" || role === "viewer",
+        can_add_notes: role === "admin" || role === "coach",
+        can_manage_users: role === "admin",
+        can_upload_inbody: role === "admin" || role === "coach",
+        can_manage_ai: role === "admin",
       },
       { onConflict: "owner_id,email" },
     )
-    .select("id,owner_id,email,role,can_view_logs,can_edit_program,can_view_measurements,can_add_notes,created_at")
+    .select("id,owner_id,email,role,can_view_logs,can_edit_program,can_view_measurements,can_add_notes,can_manage_users,can_upload_inbody,can_manage_ai,disabled_at,revoked_at,created_at")
     .single();
   if (error) throw error;
   return data as PermissionInvite;
@@ -243,3 +262,115 @@ export const createPasswordUser = async (email: string, password: string, role: 
     throw new Error(payload?.message ?? "Unable to create account.");
   }
 };
+
+export const revokePasswordUser = async (email: string, role: Exclude<CloudRole, "owner">) => {
+  const session = await getCurrentSession();
+  const token = session?.access_token;
+  if (!token) throw new Error("Owner sign-in is required before revoking users.");
+
+  const response = await fetch("/api/admin-users", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ email: email.toLowerCase().trim(), role, action: "revoke" }),
+  });
+
+  const payload = (await response.json().catch(() => null)) as { message?: string } | null;
+  if (!response.ok) {
+    throw new Error(payload?.message ?? "Unable to revoke account.");
+  }
+};
+
+export const uploadInBodyReport = async (
+  ownerId: string,
+  file: File,
+  report: Omit<InBodyReport, "id" | "uploadedAt" | "fileName" | "fileType" | "storagePath" | "publicUrl">,
+) => {
+  if (!supabase) throw new Error("Supabase is not configured.");
+  const fileType = file.type === "application/pdf" ? "pdf" : "image";
+  const safeName = file.name.toLowerCase().replace(/[^a-z0-9.-]+/g, "-");
+  const path = `${ownerId}/${Date.now()}-${safeName}`;
+  const { error: uploadError } = await supabase.storage.from("inbody-reports").upload(path, file, {
+    cacheControl: "3600",
+    upsert: false,
+  });
+  if (uploadError) throw uploadError;
+
+  const { data, error } = await supabase
+    .from("inbody_reports")
+    .insert({
+      owner_id: ownerId,
+      uploaded_by: (await getCurrentSession())?.user.id,
+      report_date: report.reportDate,
+      file_name: file.name,
+      file_type: fileType,
+      storage_path: path,
+      weight: report.weight ?? null,
+      skeletal_muscle_mass: report.skeletalMuscleMass ?? null,
+      body_fat_percentage: report.bodyFatPercentage ?? null,
+      body_fat_mass: report.bodyFatMass ?? null,
+      bmi: report.bmi ?? null,
+      metabolic_rate: report.metabolicRate ?? null,
+      notes: report.notes ?? null,
+      segment_analysis: report.segmentAnalysis ? { notes: report.segmentAnalysis } : null,
+    })
+    .select("id,owner_id,report_date,file_name,file_type,storage_path,weight,skeletal_muscle_mass,body_fat_percentage,body_fat_mass,bmi,metabolic_rate,segment_analysis,notes,created_at")
+    .single();
+  if (error) throw error;
+  return mapInBodyReport(data);
+};
+
+export const listInBodyReports = async (ownerId: string) => {
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from("inbody_reports")
+    .select("id,owner_id,report_date,file_name,file_type,storage_path,weight,skeletal_muscle_mass,body_fat_percentage,body_fat_mass,bmi,metabolic_rate,segment_analysis,notes,created_at")
+    .eq("owner_id", ownerId)
+    .order("report_date", { ascending: false });
+  if (error) throw error;
+  return (data ?? []).map(mapInBodyReport);
+};
+
+export const listAIReports = async (ownerId: string) => {
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from("ai_reports")
+    .select("id,owner_id,report_type,title,summary,recommendations,visibility,source_ids,approved_program_change,created_at")
+    .eq("owner_id", ownerId)
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data ?? []).map(
+    (item) =>
+      ({
+        id: item.id,
+        createdAt: item.created_at,
+        reportType: item.report_type,
+        title: item.title,
+        summary: item.summary,
+        recommendations: Array.isArray(item.recommendations) ? item.recommendations : [],
+        visibility: item.visibility,
+        sourceIds: Array.isArray(item.source_ids) ? item.source_ids : [],
+        approvedProgramChange: item.approved_program_change,
+      }) as AIInsightReport,
+  );
+};
+
+const mapInBodyReport = (item: any): InBodyReport => ({
+  id: item.id,
+  ownerId: item.owner_id,
+  uploadedAt: item.created_at,
+  reportDate: item.report_date,
+  fileName: item.file_name,
+  fileType: item.file_type,
+  storagePath: item.storage_path,
+  weight: item.weight == null ? undefined : Number(item.weight),
+  skeletalMuscleMass: item.skeletal_muscle_mass == null ? undefined : Number(item.skeletal_muscle_mass),
+  bodyFatPercentage: item.body_fat_percentage == null ? undefined : Number(item.body_fat_percentage),
+  bodyFatMass: item.body_fat_mass == null ? undefined : Number(item.body_fat_mass),
+  bmi: item.bmi == null ? undefined : Number(item.bmi),
+  metabolicRate: item.metabolic_rate == null ? undefined : Number(item.metabolic_rate),
+  segmentAnalysis: item.segment_analysis?.notes,
+  notes: item.notes ?? undefined,
+});

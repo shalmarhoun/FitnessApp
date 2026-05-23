@@ -7,6 +7,8 @@ export type ProgramExercise = {
   targetReps: number | "failure";
   defaultWeight: number;
   unit: "kg" | "lb";
+  restSeconds?: number;
+  notes?: string;
 };
 
 export type ProgramDay = {
@@ -64,6 +66,39 @@ export type MeasurementEntry = {
   notes?: string;
 };
 
+export type InBodyReport = {
+  id: string;
+  ownerId?: string;
+  uploadedAt: string;
+  reportDate: string;
+  fileName: string;
+  fileType: "image" | "pdf";
+  storagePath?: string;
+  publicUrl?: string;
+  weight?: number;
+  skeletalMuscleMass?: number;
+  bodyFatPercentage?: number;
+  bodyFatMass?: number;
+  bmi?: number;
+  metabolicRate?: number;
+  segmentAnalysis?: string;
+  notes?: string;
+};
+
+export type AIReportVisibility = "owner_private" | "shared_analytics";
+
+export type AIInsightReport = {
+  id: string;
+  createdAt: string;
+  reportType: "progress" | "strength" | "recovery" | "consistency" | "inbody" | "program_review";
+  title: string;
+  summary: string;
+  recommendations: string[];
+  visibility: AIReportVisibility;
+  sourceIds: string[];
+  approvedProgramChange?: boolean;
+};
+
 export type Achievement = {
   id: string;
   title: string;
@@ -90,6 +125,8 @@ export type AppData = {
   };
   sessions: WorkoutSession[];
   measurements: MeasurementEntry[];
+  inbodyReports: InBodyReport[];
+  aiReports: AIInsightReport[];
   achievements: Achievement[];
 };
 
@@ -101,4 +138,3 @@ export type ActiveSession = {
   startedAt: string;
   exercises: LoggedExercise[];
 };
-

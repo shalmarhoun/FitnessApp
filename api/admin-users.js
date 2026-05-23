@@ -53,20 +53,24 @@ export default async function handler(request, response) {
     return json(response, 400, { message: "Invalid JSON body." });
   }
 
-  const { email, password, role } = body;
+  const { email, password, role, action = "create" } = body;
   const normalizedEmail = String(email ?? "").toLowerCase().trim();
-  const normalizedRole = role === "viewer" ? "viewer" : role === "coach" ? "coach" : null;
+  const normalizedRole = role === "admin" ? "admin" : role === "viewer" ? "viewer" : role === "coach" ? "coach" : null;
 
   if (!normalizedEmail || !normalizedEmail.includes("@")) {
     return json(response, 400, { message: "A valid email is required." });
   }
 
-  if (!password || String(password).length < 6) {
+  if (action !== "revoke" && (!password || String(password).length < 6)) {
     return json(response, 400, { message: "Password must be at least 6 characters." });
   }
 
   if (!normalizedRole) {
-    return json(response, 400, { message: "Role must be coach or viewer." });
+    return json(response, 400, { message: "Role must be admin, coach, or viewer." });
+  }
+
+  if (normalizedEmail === ownerEmail) {
+    return json(response, 400, { message: "Owner account cannot be managed here." });
   }
 
   const { data: existingUsers, error: listError } = await serviceClient.auth.admin.listUsers({
@@ -78,9 +82,27 @@ export default async function handler(request, response) {
   }
 
   const existingUser = existingUsers.users.find((user) => user.email?.toLowerCase() === normalizedEmail);
+  if (action === "revoke") {
+    if (existingUser) {
+      const { error: banError } = await serviceClient.auth.admin.updateUserById(existingUser.id, {
+        ban_duration: "876000h",
+        user_metadata: { role: normalizedRole, disabled: true },
+      });
+      if (banError) return json(response, 500, { message: banError.message });
+    }
+    const { error: revokeError } = await serviceClient
+      .from("user_permissions")
+      .update({ revoked_at: new Date().toISOString(), revoked_by: owner.id, disabled_at: new Date().toISOString() })
+      .eq("owner_id", owner.id)
+      .eq("email", normalizedEmail);
+    if (revokeError) return json(response, 500, { message: revokeError.message });
+    return json(response, 200, { message: "Access revoked.", email: normalizedEmail, role: normalizedRole });
+  }
+
   const userResult = existingUser
     ? await serviceClient.auth.admin.updateUserById(existingUser.id, {
         password: String(password),
+        ban_duration: "none",
         email_confirm: true,
         user_metadata: { role: normalizedRole },
       })
@@ -99,7 +121,7 @@ export default async function handler(request, response) {
   const { error: profileError } = await serviceClient.from("profiles").upsert(
     [
       { id: owner.id, email: owner.email?.toLowerCase(), role: "owner" },
-      { id: invitedUser.id, email: normalizedEmail, role: normalizedRole, assigned_owner_id: owner.id },
+      { id: invitedUser.id, email: normalizedEmail, role: normalizedRole, assigned_owner_id: owner.id, disabled_at: null },
     ],
     { onConflict: "id" },
   );
@@ -114,9 +136,15 @@ export default async function handler(request, response) {
       email: normalizedEmail,
       role: normalizedRole,
       can_view_logs: true,
-      can_edit_program: normalizedRole === "coach",
-      can_view_measurements: normalizedRole === "coach",
-      can_add_notes: normalizedRole === "coach",
+      can_edit_program: normalizedRole === "admin" || normalizedRole === "coach",
+      can_view_measurements: true,
+      can_add_notes: normalizedRole === "admin" || normalizedRole === "coach",
+      can_manage_users: normalizedRole === "admin",
+      can_upload_inbody: normalizedRole === "admin" || normalizedRole === "coach",
+      can_manage_ai: normalizedRole === "admin",
+      disabled_at: null,
+      revoked_at: null,
+      revoked_by: null,
     },
     { onConflict: "owner_id,email" },
   );
