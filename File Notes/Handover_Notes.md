@@ -157,6 +157,7 @@ Supabase migration files added locally:
 - `supabase/migrations/20260522200000_password_invite_accounts.sql`
 - `supabase/migrations/20260522203000_role_based_app_access.sql`
 - `supabase/migrations/20260522210000_fix_profiles_policy_recursion.sql`
+- `supabase/migrations/20260523093000_fix_profiles_write_policy_recursion.sql`
 - `api/admin-users.js`
 - `.env.example`
 
@@ -174,6 +175,7 @@ Current backend state:
 - Coach accounts load the owner's cloud snapshot and can edit the program; viewer accounts are read-only in Settings.
 - Login email fields intentionally start empty; owner email is not prefilled.
 - Fixed profiles RLS recursion that caused `Unable to connect to Supabase` after a successful password sign-in.
+- Fixed remaining profiles write-policy recursion and added a login-screen `Clear saved session` action.
 
 ## Current Quality Notes
 - Before saying done, build or verify when dependencies are available.
@@ -183,7 +185,7 @@ Current backend state:
 - For Vercel, confirm `VERCEL` build uses `/` base.
 - Supabase project: `ezvwkqnyhlczlkrnhuhv`.
 - Supabase project URL: `https://ezvwkqnyhlczlkrnhuhv.supabase.co`.
-- Applied migrations: `initial_fitness_sm_backend`, `revoke_security_definer_rpc_access`, `password_invite_accounts`, `role_based_app_access`, `fix_profiles_policy_recursion`.
+- Applied migrations: `initial_fitness_sm_backend`, `revoke_security_definer_rpc_access`, `password_invite_accounts`, `role_based_app_access`, `fix_profiles_policy_recursion`, `fix_profiles_write_policy_recursion`.
 - Supabase security advisors were checked after migrations and returned no lints.
 - Current blockers from 2026-05-22: local `node.exe` returns `Access is denied`; GitHub write access is blocked by integration permissions; Vercel env var `SUPABASE_SERVICE_ROLE_KEY` still needs to be added before owner-created accounts work in deployment.
 

@@ -97,6 +97,13 @@ const pageMotion = {
 
 const uid = () => crypto.randomUUID();
 const brandIconSrc = `${import.meta.env.BASE_URL}icons/icon-192.png`;
+const getErrorMessage = (error: unknown, fallback: string) => {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "object" && error && "message" in error && typeof (error as { message?: unknown }).message === "string") {
+    return (error as { message: string }).message;
+  }
+  return fallback;
+};
 const isSameDate = (a: Date, b: Date) => dateKey(a) === dateKey(b);
 const isBeforeToday = (date: Date) => {
   const selected = new Date(date);
@@ -257,7 +264,7 @@ function App() {
         setCloud({ configured: true, session, user: session.user, profile, ownerId, permissions, status: "synced", message: "Cloud sync is active." });
       } catch (error) {
         if (!mounted) return;
-        const message = error instanceof Error ? error.message : "Unable to connect to Supabase.";
+        const message = getErrorMessage(error, "Unable to connect to Supabase.");
         setCloud((current) => ({ ...current, status: "error", message: `Supabase profile sync failed: ${message}` }));
       }
     };
@@ -580,6 +587,19 @@ function AuthGate({ cloud, setCloud }: { cloud: CloudState; setCloud: React.Disp
     }
   };
 
+  const clearSavedSession = async () => {
+    setBusy(true);
+    try {
+      await signOutCloud();
+      setPassword("");
+      setCloud((current) => ({ ...current, session: null, user: null, profile: null, ownerId: null, permissions: [], status: current.configured ? "ready" : "offline", message: "Saved session cleared. Sign in again." }));
+    } catch (error) {
+      setCloud((current) => ({ ...current, status: "error", message: getErrorMessage(error, "Unable to clear session.") }));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <motion.main className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center px-5 py-10" {...pageMotion}>
       <div className="mb-8 flex justify-center">
@@ -611,6 +631,9 @@ function AuthGate({ cloud, setCloud }: { cloud: CloudState; setCloud: React.Disp
           </Button>
           <button className="justify-self-start text-sm font-black text-lavender underline-offset-4 hover:underline disabled:opacity-50" type="button" onClick={resetPassword} disabled={!cloud.configured || busy || !email.trim()}>
             Reset password
+          </button>
+          <button className="justify-self-start text-sm font-black text-[#75677f] underline-offset-4 hover:underline disabled:opacity-50" type="button" onClick={clearSavedSession} disabled={!cloud.configured || busy}>
+            Clear saved session
           </button>
         </div>
       </Card>

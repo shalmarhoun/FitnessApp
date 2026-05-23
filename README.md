@@ -76,6 +76,7 @@ supabase/migrations/20260522183000_revoke_security_definer_rpc_access.sql
 supabase/migrations/20260522200000_password_invite_accounts.sql
 supabase/migrations/20260522203000_role_based_app_access.sql
 supabase/migrations/20260522210000_fix_profiles_policy_recursion.sql
+supabase/migrations/20260523093000_fix_profiles_write_policy_recursion.sql
 ```
 
 Set these environment variables in Vercel:
