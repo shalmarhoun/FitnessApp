@@ -86,6 +86,7 @@ import {
   revokePasswordUser,
   saveCloudSnapshot,
   saveAIReport,
+  saveManualInBodyReport,
   saveWorkoutSessionRows,
   signInWithPassword,
   signOutCloud,
@@ -1350,12 +1351,21 @@ function Measurements({
     id: uid(),
     date: dateKey(new Date()),
     bodyWeight: undefined,
+    bust: undefined,
+    leftArm: undefined,
+    rightArm: undefined,
     waist: undefined,
     hips: undefined,
-    thighs: undefined,
-    arms: undefined,
+    leftThigh: undefined,
+    rightThigh: undefined,
+    leftCalf: undefined,
+    rightCalf: undefined,
     custom: [],
   });
+
+  const updateMeasurementField = (key: keyof MeasurementEntry, value: string) => {
+    setEntry((current) => ({ ...current, [key]: value ? Number(value) : undefined }));
+  };
 
   const saveMeasurements = () => {
     updateData((current) => {
@@ -1370,46 +1380,76 @@ function Measurements({
 
   return (
     <motion.div {...pageMotion}>
-      <Header eyebrow="FITNESS SM" title="Saturday check-in, soft and simple." action={<BrandMark size="md" />} />
-      <div className="grid gap-5 lg:grid-cols-[0.9fr_1.1fr]">
+      <Header eyebrow="FITNESS SM" title="Measurements." action={<BrandMark size="md" />} />
+      <div className="grid gap-5">
         <Card>
-          <div className={`mb-5 rounded-2xl p-4 ${isSaturday ? "bg-[#ecfff6] text-[#3f8d70]" : "bg-mist text-plum"}`}>
-            <p className="text-sm font-black">{isSaturday ? "Today is the measurement ritual." : "Saturday is the ideal update day."}</p>
+          <div className="mb-5 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+            <label className="grid gap-2 text-sm font-black text-ink">
+              Measurement Date
+              <input className="h-12 rounded-2xl border border-silk bg-white/85 px-4 text-sm font-bold outline-none focus:ring-2 focus:ring-lilac" type="date" value={entry.date} onChange={(event) => setEntry((current) => ({ ...current, date: event.target.value }))} />
+            </label>
+            <div className={`rounded-2xl px-4 py-3 text-sm font-black ${isSaturday ? "bg-[#ecfff6] text-[#3f8d70]" : "bg-mist text-plum"}`}>
+              {isSaturday ? "Measurement ritual day" : "Saved dates appear in calendar"}
+            </div>
           </div>
+
+          <p className="mb-4 flex items-center gap-2 text-xs font-black uppercase text-[#75677f]"><Ruler size={16} /> Body Measurements</p>
           <div className="grid gap-3">
-            {[
-              ["bodyWeight", "Body Weight"],
-              ["waist", "Waist"],
-              ["hips", "Hips"],
-              ["thighs", "Thighs"],
-              ["arms", "Arms"],
-            ].map(([key, label]) => (
-              <label className="grid gap-2 text-sm font-black text-ink" key={key}>
-                {label}
-                <input aria-label={label} className="h-12 rounded-2xl border border-silk bg-white/85 px-4 text-sm font-bold outline-none focus:ring-2 focus:ring-lilac" type="number" value={(entry as any)[key] ?? ""} onChange={(event) => setEntry({ ...entry, [key]: Number(event.target.value) || undefined })} />
-              </label>
-            ))}
+            <label className="grid gap-2 text-sm font-black text-ink">
+              Bust
+              <input className="h-12 rounded-2xl border border-silk bg-white/85 px-4 text-sm font-bold outline-none focus:ring-2 focus:ring-lilac" type="number" value={entry.bust ?? ""} onChange={(event) => updateMeasurementField("bust", event.target.value)} />
+            </label>
+            <div className="grid grid-cols-2 gap-3">
+              {[
+                ["leftArm", "Left Arm"],
+                ["rightArm", "Right Arm"],
+              ].map(([key, label]) => (
+                <label className="grid gap-2 text-sm font-black text-ink" key={key}>
+                  {label}
+                  <input className="h-12 min-w-0 rounded-2xl border border-silk bg-white/85 px-3 text-sm font-bold outline-none focus:ring-2 focus:ring-lilac" type="number" value={(entry as any)[key] ?? ""} onChange={(event) => updateMeasurementField(key as keyof MeasurementEntry, event.target.value)} />
+                </label>
+              ))}
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              {[
+                ["waist", "Waist"],
+                ["hips", "Hips"],
+              ].map(([key, label]) => (
+                <label className="grid gap-2 text-sm font-black text-ink" key={key}>
+                  {label}
+                  <input className="h-12 min-w-0 rounded-2xl border border-silk bg-white/85 px-3 text-sm font-bold outline-none focus:ring-2 focus:ring-lilac" type="number" value={(entry as any)[key] ?? ""} onChange={(event) => updateMeasurementField(key as keyof MeasurementEntry, event.target.value)} />
+                </label>
+              ))}
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              {[
+                ["leftThigh", "Left Thigh"],
+                ["rightThigh", "Right Thigh"],
+              ].map(([key, label]) => (
+                <label className="grid gap-2 text-sm font-black text-ink" key={key}>
+                  {label}
+                  <input className="h-12 min-w-0 rounded-2xl border border-silk bg-white/85 px-3 text-sm font-bold outline-none focus:ring-2 focus:ring-lilac" type="number" value={(entry as any)[key] ?? ""} onChange={(event) => updateMeasurementField(key as keyof MeasurementEntry, event.target.value)} />
+                </label>
+              ))}
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              {[
+                ["leftCalf", "Left Calf"],
+                ["rightCalf", "Right Calf"],
+              ].map(([key, label]) => (
+                <label className="grid gap-2 text-sm font-black text-ink" key={key}>
+                  {label}
+                  <input className="h-12 min-w-0 rounded-2xl border border-silk bg-white/85 px-3 text-sm font-bold outline-none focus:ring-2 focus:ring-lilac" type="number" value={(entry as any)[key] ?? ""} onChange={(event) => updateMeasurementField(key as keyof MeasurementEntry, event.target.value)} />
+                </label>
+              ))}
+            </div>
           </div>
           <Button className="mt-5 w-full" onClick={saveMeasurements}>
-            <Save size={17} /> Save Measurements
+            <Save size={17} /> Save Body Measurements
           </Button>
         </Card>
-        <div className="grid gap-5">
-          <ChartCard title="Measurement Trends" subtitle="Weekly progress over time.">
-            <ResponsiveContainer width="100%" height={340}>
-              <LineChart data={[...data.measurements].reverse().map((item) => ({ name: new Date(item.date).toLocaleDateString("en", { month: "short", day: "numeric" }), weight: item.bodyWeight, waist: item.waist, hips: item.hips }))}>
-                <CartesianGrid stroke="#E9E1F5" vertical={false} />
-                <XAxis dataKey="name" tick={{ fill: "#75677f", fontSize: 12 }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fill: "#75677f", fontSize: 12 }} axisLine={false} tickLine={false} />
-                <Tooltip contentStyle={{ borderRadius: 16, borderColor: "#E8DEFF" }} />
-                <Line dataKey="weight" stroke="#8F6FE8" strokeWidth={3} />
-                <Line dataKey="waist" stroke="#F5C8D7" strokeWidth={3} />
-                <Line dataKey="hips" stroke="#A8C7B5" strokeWidth={3} />
-              </LineChart>
-            </ResponsiveContainer>
-          </ChartCard>
-          <InBodyIntelligenceCard data={data} updateData={updateData} cloud={cloud} canUpload={canUploadInBody} />
-        </div>
+
+        <InBodyIntelligenceCard data={data} updateData={updateData} cloud={cloud} canUpload={canUploadInBody} />
       </div>
     </motion.div>
   );
@@ -1681,7 +1721,7 @@ const createInBodyAnalysis = (report: InBodyReport, previous?: InBodyReport): AI
       createdAt: new Date().toISOString(),
       reportType: "inbody",
       title: "First InBody Baseline",
-      summary: `Baseline saved for ${formatDisplayDate(new Date(report.reportDate))}. Weight ${formatMetric(report.weight, " kg")}, body fat ${formatMetric(report.bodyFatPercentage, "%")}, skeletal muscle ${formatMetric(report.skeletalMuscleMass, " kg")}.`,
+      summary: `Baseline saved for ${formatDisplayDate(new Date(report.reportDate))}. Weight ${formatMetric(report.weight, " kg")}, body fat ${formatMetric(report.bodyFatPercentage, "%")}, skeletal muscle ${formatMetric(report.skeletalMuscleMass, " kg")}, InBody score ${formatMetric(report.inbodyScore)}.`,
       recommendations: [
         "Use the next InBody upload as the first comparison point.",
         "Keep report metrics filled in so the app can compare trends automatically.",
@@ -1699,7 +1739,22 @@ const createInBodyAnalysis = (report: InBodyReport, previous?: InBodyReport): AI
     metricComparison("Body fat", report.bodyFatPercentage, previous.bodyFatPercentage, "%", true),
     metricComparison("Body fat mass", report.bodyFatMass, previous.bodyFatMass, " kg", true),
     metricComparison("BMI", report.bmi, previous.bmi, "", true),
+    metricComparison("InBody score", report.inbodyScore, previous.inbodyScore, "", false),
+    metricComparison("Waist-hip ratio", report.waistHipRatio, previous.waistHipRatio, "", true),
+    metricComparison("Visceral fat level", report.visceralFatLevel, previous.visceralFatLevel, "", true),
     metricComparison("Metabolic rate", report.metabolicRate, previous.metabolicRate, " kcal", false),
+  ].filter(Boolean) as string[];
+  const positives = [
+    typeof report.skeletalMuscleMass === "number" && typeof previous.skeletalMuscleMass === "number" && report.skeletalMuscleMass > previous.skeletalMuscleMass ? "Positive: skeletal muscle increased." : undefined,
+    typeof report.bodyFatPercentage === "number" && typeof previous.bodyFatPercentage === "number" && report.bodyFatPercentage < previous.bodyFatPercentage ? "Positive: body fat percentage decreased." : undefined,
+    typeof report.inbodyScore === "number" && typeof previous.inbodyScore === "number" && report.inbodyScore > previous.inbodyScore ? "Positive: InBody score improved." : undefined,
+    typeof report.visceralFatLevel === "number" && typeof previous.visceralFatLevel === "number" && report.visceralFatLevel < previous.visceralFatLevel ? "Positive: visceral fat level moved down." : undefined,
+  ].filter(Boolean) as string[];
+  const watchouts = [
+    typeof report.bodyFatPercentage === "number" && typeof previous.bodyFatPercentage === "number" && report.bodyFatPercentage > previous.bodyFatPercentage ? "Watch: body fat percentage increased." : undefined,
+    typeof report.skeletalMuscleMass === "number" && typeof previous.skeletalMuscleMass === "number" && report.skeletalMuscleMass < previous.skeletalMuscleMass ? "Watch: skeletal muscle decreased." : undefined,
+    typeof report.waistHipRatio === "number" && typeof previous.waistHipRatio === "number" && report.waistHipRatio > previous.waistHipRatio ? "Watch: waist-hip ratio increased." : undefined,
+    typeof report.visceralFatLevel === "number" && typeof previous.visceralFatLevel === "number" && report.visceralFatLevel > previous.visceralFatLevel ? "Watch: visceral fat level increased." : undefined,
   ].filter(Boolean) as string[];
 
   const hasMeaningfulComparison = comparisons.length > 0;
@@ -1713,6 +1768,8 @@ const createInBodyAnalysis = (report: InBodyReport, previous?: InBodyReport): AI
       : `Report saved for ${formatDisplayDate(new Date(report.reportDate))}. Add numeric metrics to this and the previous report to unlock automatic trend comparison.`,
     recommendations: hasMeaningfulComparison
       ? [
+          ...(positives.length ? positives : ["Positive: report data is saved and comparable for future trend tracking."]),
+          ...(watchouts.length ? watchouts : ["Watch: no major negative movement detected from the compared metrics."]),
           ...comparisons.slice(0, 4),
           "Use this trend as decision support. Training plan edits still need owner approval.",
         ]
@@ -1733,7 +1790,7 @@ const previousInBodyReport = (reports: InBodyReport[], report: InBodyReport) =>
   [...reports].filter((item) => item.id !== report.id).sort((a, b) => new Date(b.reportDate).getTime() - new Date(a.reportDate).getTime())[0];
 
 const hasInBodyMetrics = (report: InBodyReport) =>
-  [report.weight, report.skeletalMuscleMass, report.bodyFatPercentage, report.bodyFatMass, report.bmi, report.metabolicRate].some((value) => typeof value === "number" && Number.isFinite(value));
+  [report.weight, report.skeletalMuscleMass, report.bodyFatPercentage, report.bodyFatMass, report.bmi, report.inbodyScore, report.waistHipRatio, report.visceralFatLevel, report.metabolicRate].some((value) => typeof value === "number" && Number.isFinite(value));
 
 function InBodyIntelligenceCard({
   data,
@@ -1755,6 +1812,9 @@ function InBodyIntelligenceCard({
     bodyFatPercentage: "",
     bodyFatMass: "",
     bmi: "",
+    inbodyScore: "",
+    waistHipRatio: "",
+    visceralFatLevel: "",
     metabolicRate: "",
     notes: "",
   });
@@ -1765,6 +1825,9 @@ function InBodyIntelligenceCard({
     bodyFatPercentage: "",
     bodyFatMass: "",
     bmi: "",
+    inbodyScore: "",
+    waistHipRatio: "",
+    visceralFatLevel: "",
     metabolicRate: "",
     notes: "",
   });
@@ -1774,7 +1837,12 @@ function InBodyIntelligenceCard({
     date: new Date(report.reportDate).toLocaleDateString("en", { month: "short", day: "numeric" }),
     weight: report.weight,
     bodyFat: report.bodyFatPercentage,
+    bodyFatMass: report.bodyFatMass,
+    bmi: report.bmi,
     muscle: report.skeletalMuscleMass,
+    score: report.inbodyScore,
+    whr: report.waistHipRatio,
+    visceralFat: report.visceralFatLevel,
   }));
   const latestReport = sortedReports.find(hasInBodyMetrics) ?? sortedReports[0];
   const latestAnalysis =
@@ -1793,6 +1861,9 @@ function InBodyIntelligenceCard({
         bodyFatPercentage: form.bodyFatPercentage ? Number(form.bodyFatPercentage) : undefined,
         bodyFatMass: form.bodyFatMass ? Number(form.bodyFatMass) : undefined,
         bmi: form.bmi ? Number(form.bmi) : undefined,
+        inbodyScore: form.inbodyScore ? Number(form.inbodyScore) : undefined,
+        waistHipRatio: form.waistHipRatio ? Number(form.waistHipRatio) : undefined,
+        visceralFatLevel: form.visceralFatLevel ? Number(form.visceralFatLevel) : undefined,
         metabolicRate: form.metabolicRate ? Number(form.metabolicRate) : undefined,
         notes: form.notes || undefined,
       });
@@ -1811,6 +1882,39 @@ function InBodyIntelligenceCard({
     } finally {
       setBusy(false);
       event.target.value = "";
+    }
+  };
+
+  const saveManualReport = async () => {
+    if (!cloud.ownerId) return;
+    setBusy(true);
+    try {
+      const reportDraft = {
+        reportDate: form.reportDate,
+        weight: form.weight ? Number(form.weight) : undefined,
+        skeletalMuscleMass: form.skeletalMuscleMass ? Number(form.skeletalMuscleMass) : undefined,
+        bodyFatPercentage: form.bodyFatPercentage ? Number(form.bodyFatPercentage) : undefined,
+        bodyFatMass: form.bodyFatMass ? Number(form.bodyFatMass) : undefined,
+        bmi: form.bmi ? Number(form.bmi) : undefined,
+        inbodyScore: form.inbodyScore ? Number(form.inbodyScore) : undefined,
+        waistHipRatio: form.waistHipRatio ? Number(form.waistHipRatio) : undefined,
+        visceralFatLevel: form.visceralFatLevel ? Number(form.visceralFatLevel) : undefined,
+        metabolicRate: form.metabolicRate ? Number(form.metabolicRate) : undefined,
+        notes: form.notes || undefined,
+      };
+      const report = await saveManualInBodyReport(cloud.ownerId, reportDraft);
+      const previous = previousInBodyReport(data.inbodyReports ?? [], report);
+      const generatedAnalysis = createInBodyAnalysis(report, previous);
+      const savedAnalysis = await saveAIReport(cloud.ownerId, generatedAnalysis).catch(() => generatedAnalysis);
+      updateData((current) => ({
+        ...current,
+        inbodyReports: [report, ...(current.inbodyReports ?? [])],
+        aiReports: [savedAnalysis, ...(current.aiReports ?? [])],
+      }));
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "Unable to save InBody data.");
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -1839,6 +1943,9 @@ function InBodyIntelligenceCard({
       bodyFatPercentage: report.bodyFatPercentage?.toString() ?? "",
       bodyFatMass: report.bodyFatMass?.toString() ?? "",
       bmi: report.bmi?.toString() ?? "",
+      inbodyScore: report.inbodyScore?.toString() ?? "",
+      waistHipRatio: report.waistHipRatio?.toString() ?? "",
+      visceralFatLevel: report.visceralFatLevel?.toString() ?? "",
       metabolicRate: report.metabolicRate?.toString() ?? "",
       notes: report.notes ?? "",
     });
@@ -1854,6 +1961,9 @@ function InBodyIntelligenceCard({
         bodyFatPercentage: metricsDraft.bodyFatPercentage ? Number(metricsDraft.bodyFatPercentage) : undefined,
         bodyFatMass: metricsDraft.bodyFatMass ? Number(metricsDraft.bodyFatMass) : undefined,
         bmi: metricsDraft.bmi ? Number(metricsDraft.bmi) : undefined,
+        inbodyScore: metricsDraft.inbodyScore ? Number(metricsDraft.inbodyScore) : undefined,
+        waistHipRatio: metricsDraft.waistHipRatio ? Number(metricsDraft.waistHipRatio) : undefined,
+        visceralFatLevel: metricsDraft.visceralFatLevel ? Number(metricsDraft.visceralFatLevel) : undefined,
         metabolicRate: metricsDraft.metabolicRate ? Number(metricsDraft.metabolicRate) : undefined,
         notes: metricsDraft.notes || undefined,
       };
@@ -1888,6 +1998,9 @@ function InBodyIntelligenceCard({
           ["bodyFatPercentage", "Body Fat %", "number"],
           ["bodyFatMass", "Body Fat Mass", "number"],
           ["bmi", "BMI", "number"],
+          ["inbodyScore", "InBody Score", "number"],
+          ["waistHipRatio", "Waist-Hip Ratio", "number"],
+          ["visceralFatLevel", "Visceral Fat Level", "number"],
           ["metabolicRate", "Metabolic Rate", "number"],
         ].map(([key, label, type]) => (
           <label className="grid gap-1 text-[10px] font-black uppercase tracking-[0.12em] text-[#75677f]" key={key}>
@@ -1906,28 +2019,14 @@ function InBodyIntelligenceCard({
         <textarea className="min-h-20 rounded-2xl border border-silk bg-white/85 px-3 py-3 text-sm font-bold normal-case tracking-normal outline-none focus:ring-2 focus:ring-lilac" value={form.notes} onChange={(event) => setForm((current) => ({ ...current, notes: event.target.value }))} />
       </label>
       <div className="mt-4 grid gap-3">
+        <Button onClick={saveManualReport} disabled={!canUpload || busy || !cloud.ownerId}>
+          <Sparkles size={17} /> Save InBody Data & Analyze
+        </Button>
         <Button onClick={() => fileRef.current?.click()} disabled={!canUpload || busy || !cloud.ownerId}>
-          <Upload size={17} /> Upload Image or PDF
+          <Upload size={17} /> Upload Image or PDF With Data
         </Button>
         <input ref={fileRef} className="hidden" type="file" accept="image/png,image/jpeg,image/webp,application/pdf" onChange={uploadReport} />
         {!canUpload && <p className="rounded-2xl bg-mist px-4 py-3 text-xs font-bold text-plum">Your role can view InBody history but cannot upload reports.</p>}
-      </div>
-      <div className="mt-5 h-44">
-        {chartData.length ? (
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={chartData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#EFE6FF" />
-              <XAxis dataKey="date" tick={{ fill: "#75677f", fontSize: 11 }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fill: "#75677f", fontSize: 11 }} axisLine={false} tickLine={false} />
-              <Tooltip contentStyle={{ borderRadius: 16, borderColor: "#E8DEFF" }} />
-              <Line dataKey="weight" stroke="#8F6FE8" strokeWidth={3} dot={false} />
-              <Line dataKey="bodyFat" stroke="#F5A9C3" strokeWidth={3} dot={false} />
-              <Line dataKey="muscle" stroke="#A8C7B5" strokeWidth={3} dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
-        ) : (
-          <div className="flex h-full items-center justify-center rounded-2xl bg-mist text-center text-sm font-bold text-[#75677f]">Upload your first InBody report to unlock body composition trends.</div>
-        )}
       </div>
       {latestAnalysis && (
         <div className="mt-4 rounded-[24px] bg-gradient-to-br from-white via-[#fff7fb] to-[#f2ecff] p-4 ring-1 ring-silk">
@@ -1979,6 +2078,9 @@ function InBodyIntelligenceCard({
                     ["bodyFatPercentage", "Body Fat %"],
                     ["bodyFatMass", "Body Fat Mass"],
                     ["bmi", "BMI"],
+                    ["inbodyScore", "InBody Score"],
+                    ["waistHipRatio", "Waist-Hip Ratio"],
+                    ["visceralFatLevel", "Visceral Fat Level"],
                     ["metabolicRate", "Metabolic Rate"],
                   ].map(([key, label]) => (
                     <label className="grid gap-1 text-[9px] font-black uppercase tracking-[0.1em] text-[#75677f]" key={key}>
@@ -2014,6 +2116,31 @@ function InBodyIntelligenceCard({
           </div>
           );
         })}
+      </div>
+      <div className="mt-5">
+        <p className="mb-3 text-xs font-black uppercase text-[#75677f]">InBody Trend Graph</p>
+        <div className="h-64">
+          {chartData.length ? (
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={chartData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#EFE6FF" />
+                <XAxis dataKey="date" tick={{ fill: "#75677f", fontSize: 11 }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fill: "#75677f", fontSize: 11 }} axisLine={false} tickLine={false} />
+                <Tooltip contentStyle={{ borderRadius: 16, borderColor: "#E8DEFF" }} />
+                <Line dataKey="weight" stroke="#8F6FE8" strokeWidth={3} dot={false} />
+                <Line dataKey="muscle" stroke="#A8C7B5" strokeWidth={3} dot={false} />
+                <Line dataKey="bodyFat" stroke="#F5A9C3" strokeWidth={3} dot={false} />
+                <Line dataKey="bodyFatMass" stroke="#F7C4D8" strokeWidth={2} dot={false} />
+                <Line dataKey="bmi" stroke="#BBA7FF" strokeWidth={2} dot={false} />
+                <Line dataKey="score" stroke="#7B61FF" strokeWidth={2} dot={false} />
+                <Line dataKey="whr" stroke="#D7B8FF" strokeWidth={2} dot={false} />
+                <Line dataKey="visceralFat" stroke="#E49AB0" strokeWidth={2} dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="flex h-full items-center justify-center rounded-2xl bg-mist text-center text-sm font-bold text-[#75677f]">Save InBody data to unlock the paper-style line trend.</div>
+          )}
+        </div>
       </div>
     </Card>
   );
@@ -2447,6 +2574,7 @@ function CalendarSheet({
     return date;
   });
   const completedDates = new Set(data.sessions.map((session) => dateKey(new Date(session.completedAt))));
+  const measurementDates = new Set((data.measurements ?? []).map((item) => item.date));
   const historySessions = historyDate ? data.sessions.filter((session) => dateKey(new Date(session.completedAt)) === dateKey(historyDate)) : [];
 
   const chooseDate = (date: Date) => {
@@ -2510,6 +2638,7 @@ function CalendarSheet({
                   const selected = isSameDate(date, selectedDate);
                   const currentMonth = date.getMonth() === visibleMonth.getMonth();
                   const completed = completedDates.has(key);
+                  const measured = measurementDates.has(key);
                   const saturday = weekdayName(date) === "Saturday";
                   return (
                     <button
@@ -2520,9 +2649,9 @@ function CalendarSheet({
                       aria-label={`${formatDisplayDate(date)}${completed ? ", done, view workout history" : workout ? `, ${workout.title}` : saturday ? ", measurement day" : ", recovery day"}`}
                     >
                       <span className="block text-sm font-black">{date.getDate()}</span>
-                      <span className={`mt-1 block h-1.5 w-1.5 rounded-full ${completed ? "bg-sage" : workout ? selected ? "bg-white" : "bg-lavender" : saturday ? "bg-blush" : "bg-transparent"}`} />
+                      <span className={`mt-1 block h-1.5 w-1.5 rounded-full ${completed || measured ? "bg-sage" : workout ? selected ? "bg-white" : "bg-lavender" : saturday ? "bg-blush" : "bg-transparent"}`} />
                       <span className={`mt-1 block truncate text-[9px] font-black uppercase ${selected ? "text-white/90" : "text-[#75677f]"}`}>
-                        {completed ? "Done" : workout ? "Lift" : saturday ? "Measure" : ""}
+                        {completed ? "Done" : measured ? "Saved" : workout ? "Lift" : saturday ? "Measure" : ""}
                       </span>
                     </button>
                   );

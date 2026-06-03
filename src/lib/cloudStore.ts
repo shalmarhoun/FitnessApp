@@ -312,11 +312,46 @@ export const uploadInBodyReport = async (
       body_fat_percentage: report.bodyFatPercentage ?? null,
       body_fat_mass: report.bodyFatMass ?? null,
       bmi: report.bmi ?? null,
+      inbody_score: report.inbodyScore ?? null,
+      waist_hip_ratio: report.waistHipRatio ?? null,
+      visceral_fat_level: report.visceralFatLevel ?? null,
       metabolic_rate: report.metabolicRate ?? null,
       notes: report.notes ?? null,
       segment_analysis: report.segmentAnalysis ? { notes: report.segmentAnalysis } : null,
     })
-    .select("id,owner_id,report_date,file_name,file_type,storage_path,weight,skeletal_muscle_mass,body_fat_percentage,body_fat_mass,bmi,metabolic_rate,segment_analysis,notes,created_at")
+    .select("id,owner_id,report_date,file_name,file_type,storage_path,weight,skeletal_muscle_mass,body_fat_percentage,body_fat_mass,bmi,inbody_score,waist_hip_ratio,visceral_fat_level,metabolic_rate,segment_analysis,notes,created_at")
+    .single();
+  if (error) throw error;
+  return mapInBodyReport(data);
+};
+
+export const saveManualInBodyReport = async (
+  ownerId: string,
+  report: Omit<InBodyReport, "id" | "uploadedAt" | "fileName" | "fileType" | "storagePath" | "publicUrl">,
+) => {
+  if (!supabase) throw new Error("Supabase is not configured.");
+  const { data, error } = await supabase
+    .from("inbody_reports")
+    .insert({
+      owner_id: ownerId,
+      uploaded_by: (await getCurrentSession())?.user.id,
+      report_date: report.reportDate,
+      file_name: "Manual InBody Entry",
+      file_type: "image",
+      storage_path: `${ownerId}/manual-${Date.now()}`,
+      weight: report.weight ?? null,
+      skeletal_muscle_mass: report.skeletalMuscleMass ?? null,
+      body_fat_percentage: report.bodyFatPercentage ?? null,
+      body_fat_mass: report.bodyFatMass ?? null,
+      bmi: report.bmi ?? null,
+      inbody_score: report.inbodyScore ?? null,
+      waist_hip_ratio: report.waistHipRatio ?? null,
+      visceral_fat_level: report.visceralFatLevel ?? null,
+      metabolic_rate: report.metabolicRate ?? null,
+      notes: report.notes ?? null,
+      segment_analysis: report.segmentAnalysis ? { notes: report.segmentAnalysis } : null,
+    })
+    .select("id,owner_id,report_date,file_name,file_type,storage_path,weight,skeletal_muscle_mass,body_fat_percentage,body_fat_mass,bmi,inbody_score,waist_hip_ratio,visceral_fat_level,metabolic_rate,segment_analysis,notes,created_at")
     .single();
   if (error) throw error;
   return mapInBodyReport(data);
@@ -326,7 +361,7 @@ export const listInBodyReports = async (ownerId: string) => {
   if (!supabase) return [];
   const { data, error } = await supabase
     .from("inbody_reports")
-    .select("id,owner_id,report_date,file_name,file_type,storage_path,weight,skeletal_muscle_mass,body_fat_percentage,body_fat_mass,bmi,metabolic_rate,segment_analysis,notes,created_at")
+    .select("id,owner_id,report_date,file_name,file_type,storage_path,weight,skeletal_muscle_mass,body_fat_percentage,body_fat_mass,bmi,inbody_score,waist_hip_ratio,visceral_fat_level,metabolic_rate,segment_analysis,notes,created_at")
     .eq("owner_id", ownerId)
     .order("report_date", { ascending: false });
   if (error) throw error;
@@ -346,7 +381,7 @@ export const deleteInBodyReport = async (report: InBodyReport) => {
 
 export const updateInBodyReportMetrics = async (
   reportId: string,
-  patch: Pick<InBodyReport, "weight" | "skeletalMuscleMass" | "bodyFatPercentage" | "bodyFatMass" | "bmi" | "metabolicRate" | "notes">,
+  patch: Pick<InBodyReport, "weight" | "skeletalMuscleMass" | "bodyFatPercentage" | "bodyFatMass" | "bmi" | "inbodyScore" | "waistHipRatio" | "visceralFatLevel" | "metabolicRate" | "notes">,
 ) => {
   if (!supabase) return;
   const { error } = await supabase
@@ -357,6 +392,9 @@ export const updateInBodyReportMetrics = async (
       body_fat_percentage: patch.bodyFatPercentage ?? null,
       body_fat_mass: patch.bodyFatMass ?? null,
       bmi: patch.bmi ?? null,
+      inbody_score: patch.inbodyScore ?? null,
+      waist_hip_ratio: patch.waistHipRatio ?? null,
+      visceral_fat_level: patch.visceralFatLevel ?? null,
       metabolic_rate: patch.metabolicRate ?? null,
       notes: patch.notes ?? null,
       updated_at: new Date().toISOString(),
@@ -422,6 +460,9 @@ const mapInBodyReport = (item: any): InBodyReport => ({
   bodyFatPercentage: item.body_fat_percentage == null ? undefined : Number(item.body_fat_percentage),
   bodyFatMass: item.body_fat_mass == null ? undefined : Number(item.body_fat_mass),
   bmi: item.bmi == null ? undefined : Number(item.bmi),
+  inbodyScore: item.inbody_score == null ? undefined : Number(item.inbody_score),
+  waistHipRatio: item.waist_hip_ratio == null ? undefined : Number(item.waist_hip_ratio),
+  visceralFatLevel: item.visceral_fat_level == null ? undefined : Number(item.visceral_fat_level),
   metabolicRate: item.metabolic_rate == null ? undefined : Number(item.metabolic_rate),
   segmentAnalysis: item.segment_analysis?.notes,
   notes: item.notes ?? undefined,

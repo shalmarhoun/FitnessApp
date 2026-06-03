@@ -58,8 +58,15 @@ export type MeasurementEntry = {
   id: string;
   date: string;
   bodyWeight?: number;
+  bust?: number;
+  leftArm?: number;
+  rightArm?: number;
   waist?: number;
   hips?: number;
+  leftThigh?: number;
+  rightThigh?: number;
+  leftCalf?: number;
+  rightCalf?: number;
   thighs?: number;
   arms?: number;
   custom: { id: string; label: string; value: number; unit: string }[];
@@ -80,6 +87,9 @@ export type InBodyReport = {
   bodyFatPercentage?: number;
   bodyFatMass?: number;
   bmi?: number;
+  inbodyScore?: number;
+  waistHipRatio?: number;
+  visceralFatLevel?: number;
   metabolicRate?: number;
   segmentAnalysis?: string;
   notes?: string;
