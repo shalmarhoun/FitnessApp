@@ -206,6 +206,12 @@ export const saveWorkoutSessionRows = async (ownerId: string, session: WorkoutSe
   }
 };
 
+export const deleteWorkoutSessionRows = async (ownerId: string, sessionId: string) => {
+  if (!supabase) return;
+  const { error } = await supabase.from("workout_sessions").delete().eq("owner_id", ownerId).eq("id", sessionId);
+  if (error) throw error;
+};
+
 export const listPermissionInvites = async (ownerId: string) => {
   if (!supabase) return [];
   const { data, error } = await supabase

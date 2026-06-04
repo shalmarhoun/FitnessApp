@@ -91,6 +91,7 @@ import {
   signInWithPassword,
   signOutCloud,
   subscribeToAuth,
+  deleteWorkoutSessionRows,
   deleteInBodyReport,
   updateInBodyReportMetrics,
   uploadInBodyReport,
@@ -468,6 +469,9 @@ function App() {
               {calendarOpen && (
                 <CalendarSheet
                   data={data}
+                  updateData={updateData}
+                  cloud={cloud}
+                  canDeleteSessions={ownerSignedIn}
                   selectedDate={selectedDate}
                   onSelectDate={setSelectedDate}
                   onClose={() => setCalendarOpen(false)}
@@ -851,7 +855,17 @@ function Dashboard({
   );
 }
 
-const DayHistoryCard = ({ date, sessions }: { date: Date; sessions: WorkoutSession[] }) => {
+const DayHistoryCard = ({
+  date,
+  sessions,
+  canDeleteSessions,
+  onDeleteSession,
+}: {
+  date: Date;
+  sessions: WorkoutSession[];
+  canDeleteSessions: boolean;
+  onDeleteSession: (session: WorkoutSession) => void;
+}) => {
   const totalVolume = sessions.reduce((sum, session) => sum + session.totalVolume, 0);
   const totalSets = sessions.reduce((sum, session) => sum + session.exercises.reduce((exerciseSum, exercise) => exerciseSum + exercise.sets.filter((set) => set.completed).length, 0), 0);
   return (
@@ -886,7 +900,19 @@ const DayHistoryCard = ({ date, sessions }: { date: Date; sessions: WorkoutSessi
                   {formatDuration(session.durationSeconds)} / {session.estimatedCalories} cal / {session.mood ?? "No mood"}
                 </p>
               </div>
-              <span className="rounded-full bg-mist px-3 py-2 text-xs font-black text-lavender">{session.scheduledWeekday}</span>
+              <div className="flex items-center gap-2">
+                <span className="rounded-full bg-mist px-3 py-2 text-xs font-black text-lavender">{session.scheduledWeekday}</span>
+                {canDeleteSessions && (
+                  <button
+                    className="flex h-10 w-10 items-center justify-center rounded-full bg-[#fff0f4] text-[#a93f5b] ring-1 ring-[#ffd2de]"
+                    type="button"
+                    aria-label={`Delete ${session.title}`}
+                    onClick={() => onDeleteSession(session)}
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                )}
+              </div>
             </div>
             <div className="space-y-3">
               {session.exercises.map((exercise) => (
@@ -2966,11 +2992,17 @@ const MiniVolumeChart = ({ sessions }: { sessions: WorkoutSession[] }) => {
 
 function CalendarSheet({
   data,
+  updateData,
+  cloud,
+  canDeleteSessions,
   selectedDate,
   onSelectDate,
   onClose,
 }: {
   data: AppData;
+  updateData: (updater: (data: AppData) => AppData) => void;
+  cloud: CloudState;
+  canDeleteSessions: boolean;
   selectedDate: Date;
   onSelectDate: (date: Date) => void;
   onClose: () => void;
@@ -2989,6 +3021,21 @@ function CalendarSheet({
   const completedDates = new Set(data.sessions.map((session) => dateKey(new Date(session.completedAt))));
   const measurementDates = new Set((data.measurements ?? []).map((item) => item.date));
   const historySessions = historyDate ? data.sessions.filter((session) => dateKey(new Date(session.completedAt)) === dateKey(historyDate)) : [];
+
+  const deleteSession = async (session: WorkoutSession) => {
+    const confirmed = window.confirm(`Delete "${session.title}" from ${formatDisplayDate(new Date(session.completedAt))}? This removes the saved workout history for that session.`);
+    if (!confirmed) return;
+    const deletedDateKey = dateKey(new Date(session.completedAt));
+    updateData((current) => ({ ...current, sessions: current.sessions.filter((item) => item.id !== session.id) }));
+    try {
+      if (cloud.ownerId && canDeleteSessions) await deleteWorkoutSessionRows(cloud.ownerId, session.id);
+      const stillHasSessions = data.sessions.some((item) => item.id !== session.id && dateKey(new Date(item.completedAt)) === deletedDateKey);
+      if (!stillHasSessions) setHistoryDate(null);
+    } catch (error) {
+      updateData((current) => ({ ...current, sessions: [session, ...current.sessions.filter((item) => item.id !== session.id)] }));
+      window.alert(error instanceof Error ? error.message : "Unable to delete this workout from Supabase.");
+    }
+  };
 
   const chooseDate = (date: Date) => {
     if (completedDates.has(dateKey(date))) {
@@ -3037,7 +3084,7 @@ function CalendarSheet({
         <AnimatePresence mode="wait">
           {historyDate ? (
             <motion.div key="history" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }} transition={{ duration: 0.2 }}>
-              <DayHistoryCard date={historyDate} sessions={historySessions} />
+              <DayHistoryCard date={historyDate} sessions={historySessions} canDeleteSessions={canDeleteSessions} onDeleteSession={deleteSession} />
             </motion.div>
           ) : (
             <motion.div key={dateKey(visibleMonth)} initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -16 }} transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}>
