@@ -1335,6 +1335,105 @@ const ChartCard = ({ title, subtitle, children }: { title: string; subtitle: str
   </Card>
 );
 
+type MeasurementSectionId = "snapshot" | "body" | "reports" | "timeline" | "charts" | "analysis";
+
+const measurementAccordionKey = "fitnessSm.measurementAccordion.v1";
+
+const SectionShell = ({
+  id,
+  title,
+  eyebrow,
+  description,
+  open,
+  onToggle,
+  children,
+}: {
+  id: MeasurementSectionId;
+  title: string;
+  eyebrow: string;
+  description: string;
+  open: boolean;
+  onToggle: (id: MeasurementSectionId) => void;
+  children: React.ReactNode;
+}) => (
+  <Card className={open ? "bg-gradient-to-br from-white via-[#fffaff] to-[#f7f1ff]" : "bg-white/78"}>
+    <button className="flex w-full items-center justify-between gap-4 text-left" type="button" onClick={() => onToggle(id)} aria-expanded={open}>
+      <div className="min-w-0">
+        <p className="text-xs font-black uppercase tracking-[0.16em] text-lavender">{eyebrow}</p>
+        <h2 className="mt-1 text-xl font-black text-ink">{title}</h2>
+        <p className="mt-1 text-sm font-semibold leading-6 text-[#75677f]">{description}</p>
+      </div>
+      <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white/75 text-plum ring-1 ring-silk">
+        <ChevronDown className={`transition ${open ? "rotate-180" : ""}`} size={20} />
+      </span>
+    </button>
+    <AnimatePresence initial={false}>
+      {open && (
+        <motion.div
+          className="mt-5"
+          initial={{ height: 0, opacity: 0 }}
+          animate={{ height: "auto", opacity: 1 }}
+          exit={{ height: 0, opacity: 0 }}
+          transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+          style={{ overflow: "hidden" }}
+        >
+          {children}
+        </motion.div>
+      )}
+    </AnimatePresence>
+  </Card>
+);
+
+const metricNumber = (value?: number) => (typeof value === "number" && Number.isFinite(value) ? value : undefined);
+
+const metricChange = (current?: number, compare?: number, lowerIsBetter = false) => {
+  if (typeof current !== "number" || typeof compare !== "number") return undefined;
+  const delta = current - compare;
+  const percent = compare !== 0 ? (delta / compare) * 100 : undefined;
+  const improved = Math.abs(delta) < 0.05 ? undefined : lowerIsBetter ? delta < 0 : delta > 0;
+  return { delta, percent, improved };
+};
+
+const DeltaTile = ({
+  label,
+  current,
+  unit = "",
+  change,
+}: {
+  label: string;
+  current?: number;
+  unit?: string;
+  change?: ReturnType<typeof metricChange>;
+}) => {
+  const tone = change?.improved === true ? "text-[#3f8d70] bg-[#ecfff6]" : change?.improved === false ? "text-[#a93f5b] bg-[#fff0f4]" : "text-plum bg-mist";
+  const arrow = !change || Math.abs(change.delta) < 0.05 ? "Steady" : change.delta > 0 ? "Up" : "Down";
+  return (
+    <div className="rounded-[24px] bg-white/75 p-4 ring-1 ring-silk">
+      <p className="text-[10px] font-black uppercase tracking-[0.12em] text-[#75677f]">{label}</p>
+      <p className="mt-2 text-2xl font-black text-ink">{formatMetric(current, unit)}</p>
+      <div className={`mt-3 inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-black ${tone}`}>
+        <span>{arrow}</span>
+        <span>{change ? `${Math.abs(change.delta).toFixed(1)}${unit}${typeof change.percent === "number" ? ` / ${Math.abs(change.percent).toFixed(1)}%` : ""}` : "No comparison"}</span>
+      </div>
+    </div>
+  );
+};
+
+const latestMetricReport = (reports: InBodyReport[]) =>
+  [...reports]
+    .filter(hasInBodyMetrics)
+    .sort((a, b) => new Date(b.reportDate).getTime() - new Date(a.reportDate).getTime() || new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime())[0];
+
+const firstMetricReport = (reports: InBodyReport[]) =>
+  [...reports]
+    .filter(hasInBodyMetrics)
+    .sort((a, b) => new Date(a.reportDate).getTime() - new Date(b.reportDate).getTime() || new Date(a.uploadedAt).getTime() - new Date(b.uploadedAt).getTime())[0];
+
+const daysSince = (dateString?: string) => {
+  if (!dateString) return undefined;
+  return Math.floor((Date.now() - new Date(dateString).getTime()) / (24 * 60 * 60 * 1000));
+};
+
 function Measurements({
   data,
   updateData,
@@ -1347,9 +1446,30 @@ function Measurements({
   canUploadInBody: boolean;
 }) {
   const isSaturday = weekdayName() === "Saturday";
+  const [openSections, setOpenSections] = useState<Record<MeasurementSectionId, boolean>>(() => {
+    try {
+      const saved = localStorage.getItem(measurementAccordionKey);
+      if (saved) {
+        return {
+          snapshot: true,
+          body: false,
+          reports: false,
+          timeline: false,
+          charts: false,
+          analysis: false,
+          ...(JSON.parse(saved) as Partial<Record<MeasurementSectionId, boolean>>),
+        };
+      }
+    } catch {
+      // Ignore malformed UI state and fall back to the premium default.
+    }
+    return { snapshot: true, body: false, reports: false, timeline: false, charts: false, analysis: false };
+  });
+  const [comparisonMode, setComparisonMode] = useState<"previous" | "first">("previous");
   const [entry, setEntry] = useState<MeasurementEntry>({
     id: uid(),
     date: dateKey(new Date()),
+    createdAt: new Date().toISOString(),
     bodyWeight: undefined,
     bust: undefined,
     leftArm: undefined,
@@ -1362,17 +1482,91 @@ function Measurements({
     rightCalf: undefined,
     custom: [],
   });
+  const [customDraft, setCustomDraft] = useState({ label: "", value: "", unit: "cm" });
+  const metricReports = (data.inbodyReports ?? []).filter(hasInBodyMetrics);
+  const latestReport = latestMetricReport(metricReports);
+  const previousReport = latestReport ? previousInBodyReport(metricReports, latestReport) : undefined;
+  const firstReport = firstMetricReport(metricReports);
+  const comparisonReport = comparisonMode === "first" ? firstReport : previousReport;
+  const latestMeasurement = [...(data.measurements ?? [])].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
+  const lastUploadDays = daysSince(latestReport?.reportDate);
+  const healthSignals = [
+    metricChange(latestReport?.weight, comparisonReport?.weight, true)?.improved,
+    metricChange(latestReport?.bodyFatPercentage, comparisonReport?.bodyFatPercentage, true)?.improved,
+    metricChange(latestReport?.skeletalMuscleMass, comparisonReport?.skeletalMuscleMass, false)?.improved,
+  ].filter((value) => value !== undefined);
+  const positiveSignals = healthSignals.filter(Boolean).length;
+  const healthStatus = !healthSignals.length ? "Stable" : positiveSignals >= 2 ? "Improving" : positiveSignals === 1 ? "Stable" : "Needs Attention";
+  const timelineReports = [...(data.inbodyReports ?? [])].sort((a, b) => new Date(b.reportDate).getTime() - new Date(a.reportDate).getTime() || new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime());
+  const chartData = [...metricReports].sort((a, b) => new Date(a.reportDate).getTime() - new Date(b.reportDate).getTime()).map((report) => ({
+    date: new Date(report.reportDate).toLocaleDateString("en", { month: "short", day: "numeric" }),
+    weight: report.weight,
+    bodyFat: report.bodyFatPercentage,
+    muscle: report.skeletalMuscleMass,
+    fatMass: report.bodyFatMass,
+    bmi: report.bmi,
+  }));
+  const latestAnalysis =
+    latestReport
+      ? (data.aiReports ?? []).find((report) => report.reportType === "inbody" && report.sourceIds.includes(latestReport.id)) ?? createInBodyAnalysis(latestReport, previousReport)
+      : undefined;
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(measurementAccordionKey, JSON.stringify(openSections));
+    } catch {
+      // UI state persistence is optional.
+    }
+  }, [openSections]);
+
+  useEffect(() => {
+    const reportsNeedingAnalysis = (data.inbodyReports ?? []).filter(
+      (report) => hasInBodyMetrics(report) && !(data.aiReports ?? []).some((analysis) => analysis.reportType === "inbody" && analysis.sourceIds.includes(report.id)),
+    );
+    if (!reportsNeedingAnalysis.length) return;
+    let cancelled = false;
+    Promise.all(
+      reportsNeedingAnalysis.map((report) => {
+        const generated = createInBodyAnalysis(report, previousInBodyReport(data.inbodyReports ?? [], report));
+        return cloud.ownerId ? saveAIReport(cloud.ownerId, generated).catch(() => generated) : Promise.resolve(generated);
+      }),
+    ).then((generatedReports) => {
+      if (cancelled) return;
+      updateData((current) => {
+        const existing = current.aiReports ?? [];
+        const additions = generatedReports.filter((report) => !existing.some((item) => item.reportType === "inbody" && report.sourceIds.some((id) => item.sourceIds.includes(id))));
+        return additions.length ? { ...current, aiReports: [...additions, ...existing] } : current;
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [cloud.ownerId, data.aiReports, data.inbodyReports, updateData]);
 
   const updateMeasurementField = (key: keyof MeasurementEntry, value: string) => {
     setEntry((current) => ({ ...current, [key]: value ? Number(value) : undefined }));
   };
 
+  const toggleSection = (id: MeasurementSectionId) => {
+    setOpenSections((current) => ({ ...current, [id]: !current[id] }));
+  };
+
+  const addCustomMeasurement = () => {
+    if (!customDraft.label.trim() || !customDraft.value) return;
+    setEntry((current) => ({
+      ...current,
+      custom: [...current.custom, { id: uid(), label: customDraft.label.trim(), value: Number(customDraft.value), unit: customDraft.unit || "cm" }],
+    }));
+    setCustomDraft({ label: "", value: "", unit: "cm" });
+  };
+
   const saveMeasurements = () => {
     updateData((current) => {
       const earnedSaturday = isSaturday && !current.achievements.find((item) => item.id === "saturday-ritual")?.earnedAt;
+      const savedEntry = { ...entry, createdAt: entry.createdAt ?? new Date().toISOString() };
       return {
         ...current,
-        measurements: [entry, ...current.measurements.filter((item) => item.date !== entry.date)],
+        measurements: [savedEntry, ...current.measurements.filter((item) => item.date !== entry.date)],
         achievements: current.achievements.map((achievement) => (earnedSaturday && achievement.id === "saturday-ritual" ? { ...achievement, earnedAt: new Date().toISOString() } : achievement)),
       };
     });
@@ -1382,7 +1576,59 @@ function Measurements({
     <motion.div {...pageMotion}>
       <Header eyebrow="FITNESS SM" title="Measurements." action={<BrandMark size="md" />} />
       <div className="grid gap-5">
-        <Card>
+        <SectionShell
+          id="snapshot"
+          title="Quick Progress Snapshot"
+          eyebrow="Overview"
+          description="Five-second read of your latest body composition direction."
+          open={openSections.snapshot}
+          onToggle={toggleSection}
+        >
+          <div className="mb-4 flex rounded-2xl bg-white/70 p-1 ring-1 ring-silk">
+            {(["previous", "first"] as const).map((mode) => (
+              <button
+                className={`flex-1 rounded-xl px-3 py-2 text-xs font-black uppercase transition ${comparisonMode === mode ? "bg-lavender text-white shadow-glow" : "text-plum"}`}
+                key={mode}
+                type="button"
+                onClick={() => setComparisonMode(mode)}
+              >
+                Compare to {mode}
+              </button>
+            ))}
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            <DeltaTile label="Weight" current={latestReport?.weight} unit=" kg" change={metricChange(latestReport?.weight, comparisonReport?.weight, true)} />
+            <DeltaTile label="Body Fat" current={latestReport?.bodyFatPercentage} unit="%" change={metricChange(latestReport?.bodyFatPercentage, comparisonReport?.bodyFatPercentage, true)} />
+            <DeltaTile label="Skeletal Muscle" current={latestReport?.skeletalMuscleMass} unit=" kg" change={metricChange(latestReport?.skeletalMuscleMass, comparisonReport?.skeletalMuscleMass, false)} />
+            <DeltaTile label="Fat Mass" current={latestReport?.bodyFatMass} unit=" kg" change={metricChange(latestReport?.bodyFatMass, comparisonReport?.bodyFatMass, true)} />
+            <DeltaTile label="BMI" current={latestReport?.bmi} change={metricChange(latestReport?.bmi, comparisonReport?.bmi, true)} />
+          </div>
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            <div className={`rounded-[24px] p-4 ring-1 ring-silk ${healthStatus === "Improving" ? "bg-[#ecfff6] text-[#3f8d70]" : healthStatus === "Needs Attention" ? "bg-[#fff0f4] text-[#a93f5b]" : "bg-mist text-plum"}`}>
+              <p className="text-xs font-black uppercase">Health Score</p>
+              <p className="mt-2 text-3xl font-black">{healthStatus}</p>
+              <p className="mt-1 text-sm font-bold">Based on weight, body fat, and skeletal muscle trends.</p>
+            </div>
+            <div className="rounded-[24px] bg-white/75 p-4 ring-1 ring-silk">
+              <p className="text-xs font-black uppercase text-[#75677f]">Gentle Reminder</p>
+              <p className="mt-2 text-lg font-black text-ink">
+                {typeof lastUploadDays === "number" ? `Last InBody was ${lastUploadDays} days ago.` : "No InBody report saved yet."}
+              </p>
+              <p className="mt-1 text-sm font-bold text-[#75677f]">
+                {typeof lastUploadDays === "number" && lastUploadDays > 45 ? "A fresh report will make your trend clearer." : "Your timeline updates whenever you save a new report."}
+              </p>
+            </div>
+          </div>
+        </SectionShell>
+
+        <SectionShell
+          id="body"
+          title="Body Measurements"
+          eyebrow="Manual Entry"
+          description="Clean body measurements with date memory and latest values."
+          open={openSections.body}
+          onToggle={toggleSection}
+        >
           <div className="mb-5 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
             <label className="grid gap-2 text-sm font-black text-ink">
               Measurement Date
@@ -1393,8 +1639,23 @@ function Measurements({
             </div>
           </div>
 
+          {latestMeasurement && (
+            <div className="mb-4 rounded-[24px] bg-white/70 p-4 ring-1 ring-silk">
+              <p className="text-xs font-black uppercase text-[#75677f]">Latest Saved</p>
+              <p className="mt-1 text-sm font-bold text-plum">
+                {formatDisplayDate(new Date(latestMeasurement.date))}
+                {typeof latestMeasurement.waist === "number" ? ` / Waist ${latestMeasurement.waist}` : ""}
+                {typeof latestMeasurement.hips === "number" ? ` / Hips ${latestMeasurement.hips}` : ""}
+              </p>
+            </div>
+          )}
+
           <p className="mb-4 flex items-center gap-2 text-xs font-black uppercase text-[#75677f]"><Ruler size={16} /> Body Measurements</p>
           <div className="grid gap-3">
+            <label className="grid gap-2 text-sm font-black text-ink">
+              Weight
+              <input className="h-12 rounded-2xl border border-silk bg-white/85 px-4 text-sm font-bold outline-none focus:ring-2 focus:ring-lilac" type="number" value={entry.bodyWeight ?? ""} onChange={(event) => updateMeasurementField("bodyWeight", event.target.value)} />
+            </label>
             <label className="grid gap-2 text-sm font-black text-ink">
               Bust
               <input className="h-12 rounded-2xl border border-silk bg-white/85 px-4 text-sm font-bold outline-none focus:ring-2 focus:ring-lilac" type="number" value={entry.bust ?? ""} onChange={(event) => updateMeasurementField("bust", event.target.value)} />
@@ -1444,12 +1705,124 @@ function Measurements({
               ))}
             </div>
           </div>
+          <div className="mt-4 rounded-[24px] bg-[#fbf7ff] p-4">
+            <p className="mb-3 text-xs font-black uppercase text-[#75677f]">Custom Measurements</p>
+            <div className="grid gap-2 sm:grid-cols-[1fr_120px_90px_auto]">
+              <input className="h-11 rounded-2xl border border-silk bg-white px-3 text-sm font-bold outline-none focus:ring-2 focus:ring-lilac" placeholder="Label" value={customDraft.label} onChange={(event) => setCustomDraft((current) => ({ ...current, label: event.target.value }))} />
+              <input className="h-11 rounded-2xl border border-silk bg-white px-3 text-sm font-bold outline-none focus:ring-2 focus:ring-lilac" placeholder="Value" type="number" value={customDraft.value} onChange={(event) => setCustomDraft((current) => ({ ...current, value: event.target.value }))} />
+              <input className="h-11 rounded-2xl border border-silk bg-white px-3 text-sm font-bold outline-none focus:ring-2 focus:ring-lilac" placeholder="Unit" value={customDraft.unit} onChange={(event) => setCustomDraft((current) => ({ ...current, unit: event.target.value }))} />
+              <Button variant="soft" onClick={addCustomMeasurement}>Add</Button>
+            </div>
+            {entry.custom.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {entry.custom.map((item) => (
+                  <span className="rounded-full bg-white px-3 py-2 text-xs font-black text-plum ring-1 ring-silk" key={item.id}>{item.label}: {item.value}{item.unit}</span>
+                ))}
+              </div>
+            )}
+          </div>
           <Button className="mt-5 w-full" onClick={saveMeasurements}>
             <Save size={17} /> Save Body Measurements
           </Button>
-        </Card>
+        </SectionShell>
 
-        <InBodyIntelligenceCard data={data} updateData={updateData} cloud={cloud} canUpload={canUploadInBody} />
+        <SectionShell
+          id="reports"
+          title="InBody Reports"
+          eyebrow="Upload & Save"
+          description="Save report metrics, attach images or PDFs, and preserve report history."
+          open={openSections.reports}
+          onToggle={toggleSection}
+        >
+          <InBodyIntelligenceCard data={data} updateData={updateData} cloud={cloud} canUpload={canUploadInBody} embedded showLatestAnalysis={false} showTrendGraph={false} showReportAnalysis={false} />
+        </SectionShell>
+
+        <SectionShell
+          id="timeline"
+          title="InBody Timeline"
+          eyebrow="History"
+          description="Chronological report memory with quick trend hints."
+          open={openSections.timeline}
+          onToggle={toggleSection}
+        >
+          <div className="space-y-3">
+            {timelineReports.length ? timelineReports.map((report, index) => {
+              const previous = previousInBodyReport(timelineReports, report);
+              const muscle = metricChange(report.skeletalMuscleMass, previous?.skeletalMuscleMass, false);
+              const fat = metricChange(report.bodyFatPercentage, previous?.bodyFatPercentage, true);
+              return (
+                <div className="rounded-[24px] bg-white/75 p-4 ring-1 ring-silk" key={report.id}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-black uppercase text-lavender">{new Date(report.reportDate).toLocaleDateString("en", { month: "long", year: "numeric" })}</p>
+                      <h3 className="mt-1 text-lg font-black text-ink">InBody Report #{timelineReports.length - index}</h3>
+                      <p className="mt-1 text-xs font-bold text-[#75677f]">{report.fileName}</p>
+                    </div>
+                    <span className="rounded-full bg-mist px-3 py-2 text-[10px] font-black uppercase text-lavender">{report.fileType}</span>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <span className={`rounded-full px-3 py-2 text-xs font-black ${muscle?.improved ? "bg-[#ecfff6] text-[#3f8d70]" : "bg-mist text-plum"}`}>{muscle?.delta && muscle.delta > 0 ? "Up" : "Steady"} Muscle</span>
+                    <span className={`rounded-full px-3 py-2 text-xs font-black ${fat?.improved ? "bg-[#ecfff6] text-[#3f8d70]" : fat?.improved === false ? "bg-[#fff0f4] text-[#a93f5b]" : "bg-mist text-plum"}`}>{fat?.delta && fat.delta < 0 ? "Down" : "Steady"} Fat</span>
+                  </div>
+                </div>
+              );
+            }) : (
+              <div className="rounded-[24px] bg-mist p-5 text-sm font-bold text-[#75677f]">No InBody reports yet. Save your first report to start the timeline.</div>
+            )}
+          </div>
+        </SectionShell>
+
+        <SectionShell
+          id="charts"
+          title="Progress Charts"
+          eyebrow="Trends"
+          description="Automatically generated from saved InBody metrics."
+          open={openSections.charts}
+          onToggle={toggleSection}
+        >
+          <div className="h-72">
+            {chartData.length ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={chartData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#EFE6FF" />
+                  <XAxis dataKey="date" tick={{ fill: "#75677f", fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fill: "#75677f", fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <Tooltip contentStyle={{ borderRadius: 16, borderColor: "#E8DEFF" }} />
+                  <Line dataKey="weight" stroke="#8F6FE8" strokeWidth={3} dot={false} />
+                  <Line dataKey="bodyFat" stroke="#F5A9C3" strokeWidth={3} dot={false} />
+                  <Line dataKey="muscle" stroke="#A8C7B5" strokeWidth={3} dot={false} />
+                  <Line dataKey="fatMass" stroke="#F7C4D8" strokeWidth={2} dot={false} />
+                  <Line dataKey="bmi" stroke="#BBA7FF" strokeWidth={2} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="flex h-full items-center justify-center rounded-2xl bg-mist text-center text-sm font-bold text-[#75677f]">Save InBody metrics to unlock premium charts.</div>
+            )}
+          </div>
+        </SectionShell>
+
+        <SectionShell
+          id="analysis"
+          title="AI Analysis"
+          eyebrow="Basic Comparison"
+          description="Objective changes only. No program criticism or plan edits."
+          open={openSections.analysis}
+          onToggle={toggleSection}
+        >
+          {latestAnalysis ? (
+            <div className="rounded-[24px] bg-gradient-to-br from-white via-[#fff7fb] to-[#f2ecff] p-4 ring-1 ring-silk">
+              <h3 className="text-lg font-black text-ink">{latestAnalysis.title}</h3>
+              <p className="mt-2 text-sm font-bold leading-6 text-[#75677f]">{latestAnalysis.summary}</p>
+              <div className="mt-4 grid gap-2">
+                {latestAnalysis.recommendations.slice(0, 6).map((item) => (
+                  <p className="rounded-2xl bg-white/75 px-4 py-3 text-xs font-bold text-plum" key={item}>{item}</p>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-[24px] bg-mist p-5 text-sm font-bold text-[#75677f]">Save at least one InBody report with metrics to generate basic comparison analysis.</div>
+          )}
+        </SectionShell>
       </div>
     </motion.div>
   );
@@ -1725,7 +2098,7 @@ const createInBodyAnalysis = (report: InBodyReport, previous?: InBodyReport): AI
       recommendations: [
         "Use the next InBody upload as the first comparison point.",
         "Keep report metrics filled in so the app can compare trends automatically.",
-        "Treat this as context for training rhythm, not a daily judgment.",
+        "Treat this as objective body-composition context, not a daily judgment.",
       ],
       visibility: "shared_analytics",
       sourceIds,
@@ -1771,7 +2144,7 @@ const createInBodyAnalysis = (report: InBodyReport, previous?: InBodyReport): AI
           ...(positives.length ? positives : ["Positive: report data is saved and comparable for future trend tracking."]),
           ...(watchouts.length ? watchouts : ["Watch: no major negative movement detected from the compared metrics."]),
           ...comparisons.slice(0, 4),
-          "Use this trend as decision support. Training plan edits still need owner approval.",
+          "This is an objective report comparison only; it does not change training plans.",
         ]
       : [
           "Enter weight, body fat, muscle mass, or BMI with each report for automatic comparison.",
@@ -1797,11 +2170,23 @@ function InBodyIntelligenceCard({
   updateData,
   cloud,
   canUpload,
+  showEntryForm = true,
+  showLatestAnalysis = true,
+  showReportList = true,
+  showReportAnalysis = true,
+  showTrendGraph = true,
+  embedded = false,
 }: {
   data: AppData;
   updateData: (updater: (data: AppData) => AppData) => void;
   cloud: CloudState;
   canUpload: boolean;
+  showEntryForm?: boolean;
+  showLatestAnalysis?: boolean;
+  showReportList?: boolean;
+  showReportAnalysis?: boolean;
+  showTrendGraph?: boolean;
+  embedded?: boolean;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
@@ -1848,6 +2233,30 @@ function InBodyIntelligenceCard({
   const latestAnalysis =
     (latestReport ? (data.aiReports ?? []).find((report) => report.reportType === "inbody" && report.sourceIds.includes(latestReport.id)) : undefined) ??
     (latestReport ? createInBodyAnalysis(latestReport, previousInBodyReport(data.inbodyReports ?? [], latestReport)) : undefined);
+
+  useEffect(() => {
+    const reportsNeedingAnalysis = sortedReports.filter(
+      (report) => hasInBodyMetrics(report) && !(data.aiReports ?? []).some((analysis) => analysis.reportType === "inbody" && analysis.sourceIds.includes(report.id)),
+    );
+    if (!reportsNeedingAnalysis.length) return;
+    let cancelled = false;
+    Promise.all(
+      reportsNeedingAnalysis.map((report) => {
+        const generated = createInBodyAnalysis(report, previousInBodyReport(data.inbodyReports ?? [], report));
+        return cloud.ownerId ? saveAIReport(cloud.ownerId, generated).catch(() => generated) : Promise.resolve(generated);
+      }),
+    ).then((generatedReports) => {
+      if (cancelled) return;
+      updateData((current) => {
+        const existing = current.aiReports ?? [];
+        const additions = generatedReports.filter((report) => !existing.some((item) => item.reportType === "inbody" && report.sourceIds.some((id) => item.sourceIds.includes(id))));
+        return additions.length ? { ...current, aiReports: [...additions, ...existing] } : current;
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [cloud.ownerId, data.aiReports, data.inbodyReports, sortedReports, updateData]);
 
   const uploadReport = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -1986,49 +2395,53 @@ function InBodyIntelligenceCard({
   };
 
   return (
-    <Card>
+    <motion.section layout className={embedded ? "rounded-[24px] bg-white/55 p-4 ring-1 ring-silk" : "soft-card rounded-[22px] p-5"}>
       <p className="flex items-center gap-2 text-xs font-black uppercase text-[#75677f]"><Activity size={16} /> InBody Archive</p>
       <h2 className="mt-1 text-xl font-black text-ink">Body composition memory.</h2>
       <p className="mt-2 text-sm font-semibold text-[#75677f]">Reports are stored privately. Add metrics before or after upload so comparisons can be calculated automatically.</p>
-      <div className="mt-4 grid gap-2 sm:grid-cols-2">
-        {[
-          ["reportDate", "Report Date", "date"],
-          ["weight", "Weight", "number"],
-          ["skeletalMuscleMass", "Skeletal Muscle", "number"],
-          ["bodyFatPercentage", "Body Fat %", "number"],
-          ["bodyFatMass", "Body Fat Mass", "number"],
-          ["bmi", "BMI", "number"],
-          ["inbodyScore", "InBody Score", "number"],
-          ["waistHipRatio", "Waist-Hip Ratio", "number"],
-          ["visceralFatLevel", "Visceral Fat Level", "number"],
-          ["metabolicRate", "Metabolic Rate", "number"],
-        ].map(([key, label, type]) => (
-          <label className="grid gap-1 text-[10px] font-black uppercase tracking-[0.12em] text-[#75677f]" key={key}>
-            {label}
-            <input
-              className="h-11 rounded-2xl border border-silk bg-white/85 px-3 text-sm font-bold normal-case tracking-normal outline-none focus:ring-2 focus:ring-lilac"
-              type={type}
-              value={form[key as keyof typeof form]}
-              onChange={(event) => setForm((current) => ({ ...current, [key]: event.target.value }))}
-            />
+      {showEntryForm && (
+        <>
+          <div className="mt-4 grid gap-2 sm:grid-cols-2">
+            {[
+              ["reportDate", "Report Date", "date"],
+              ["weight", "Weight", "number"],
+              ["skeletalMuscleMass", "Skeletal Muscle", "number"],
+              ["bodyFatPercentage", "Body Fat %", "number"],
+              ["bodyFatMass", "Body Fat Mass", "number"],
+              ["bmi", "BMI", "number"],
+              ["inbodyScore", "InBody Score", "number"],
+              ["waistHipRatio", "Waist-Hip Ratio", "number"],
+              ["visceralFatLevel", "Visceral Fat Level", "number"],
+              ["metabolicRate", "Metabolic Rate", "number"],
+            ].map(([key, label, type]) => (
+              <label className="grid gap-1 text-[10px] font-black uppercase tracking-[0.12em] text-[#75677f]" key={key}>
+                {label}
+                <input
+                  className="h-11 rounded-2xl border border-silk bg-white/85 px-3 text-sm font-bold normal-case tracking-normal outline-none focus:ring-2 focus:ring-lilac"
+                  type={type}
+                  value={form[key as keyof typeof form]}
+                  onChange={(event) => setForm((current) => ({ ...current, [key]: event.target.value }))}
+                />
+              </label>
+            ))}
+          </div>
+          <label className="mt-3 grid gap-1 text-[10px] font-black uppercase tracking-[0.12em] text-[#75677f]">
+            Notes
+            <textarea className="min-h-20 rounded-2xl border border-silk bg-white/85 px-3 py-3 text-sm font-bold normal-case tracking-normal outline-none focus:ring-2 focus:ring-lilac" value={form.notes} onChange={(event) => setForm((current) => ({ ...current, notes: event.target.value }))} />
           </label>
-        ))}
-      </div>
-      <label className="mt-3 grid gap-1 text-[10px] font-black uppercase tracking-[0.12em] text-[#75677f]">
-        Notes
-        <textarea className="min-h-20 rounded-2xl border border-silk bg-white/85 px-3 py-3 text-sm font-bold normal-case tracking-normal outline-none focus:ring-2 focus:ring-lilac" value={form.notes} onChange={(event) => setForm((current) => ({ ...current, notes: event.target.value }))} />
-      </label>
-      <div className="mt-4 grid gap-3">
-        <Button onClick={saveManualReport} disabled={!canUpload || busy || !cloud.ownerId}>
-          <Sparkles size={17} /> Save InBody Data & Analyze
-        </Button>
-        <Button onClick={() => fileRef.current?.click()} disabled={!canUpload || busy || !cloud.ownerId}>
-          <Upload size={17} /> Upload Image or PDF With Data
-        </Button>
-        <input ref={fileRef} className="hidden" type="file" accept="image/png,image/jpeg,image/webp,application/pdf" onChange={uploadReport} />
-        {!canUpload && <p className="rounded-2xl bg-mist px-4 py-3 text-xs font-bold text-plum">Your role can view InBody history but cannot upload reports.</p>}
-      </div>
-      {latestAnalysis && (
+          <div className="mt-4 grid gap-3">
+            <Button onClick={saveManualReport} disabled={!canUpload || busy || !cloud.ownerId}>
+              <Sparkles size={17} /> Save InBody Data & Analyze
+            </Button>
+            <Button onClick={() => fileRef.current?.click()} disabled={!canUpload || busy || !cloud.ownerId}>
+              <Upload size={17} /> Upload Image or PDF With Data
+            </Button>
+            <input ref={fileRef} className="hidden" type="file" accept="image/png,image/jpeg,image/webp,application/pdf" onChange={uploadReport} />
+            {!canUpload && <p className="rounded-2xl bg-mist px-4 py-3 text-xs font-bold text-plum">Your role can view InBody history but cannot upload reports.</p>}
+          </div>
+        </>
+      )}
+      {showLatestAnalysis && latestAnalysis && (
         <div className="mt-4 rounded-[24px] bg-gradient-to-br from-white via-[#fff7fb] to-[#f2ecff] p-4 ring-1 ring-silk">
           <div className="mb-2 flex items-center justify-between gap-3">
             <p className="flex items-center gap-2 text-xs font-black uppercase text-lavender"><Sparkles size={15} /> Latest Analysis</p>
@@ -2043,7 +2456,7 @@ function InBodyIntelligenceCard({
           </div>
         </div>
       )}
-      <div className="mt-4 space-y-2">
+      {showReportList && <div className="mt-4 space-y-2">
         {sortedReports.slice(0, 5).map((report) => {
           const reportAnalysis =
             (data.aiReports ?? []).find((item) => item.reportType === "inbody" && item.sourceIds.includes(report.id)) ??
@@ -2102,7 +2515,7 @@ function InBodyIntelligenceCard({
             {!editingReportId && !hasInBodyMetrics(report) && (
               <p className="mt-3 rounded-2xl bg-mist px-3 py-2 text-xs font-bold text-plum">No metrics yet. Tap Metrics, enter the InBody numbers, then save to create analysis.</p>
             )}
-            {reportAnalysis && (
+            {showReportAnalysis && reportAnalysis && (
               <div className="mt-3 rounded-[20px] bg-[#fbf7ff] p-3">
                 <p className="flex items-center gap-2 text-[10px] font-black uppercase text-lavender"><Sparkles size={13} /> Analysis</p>
                 <p className="mt-1 text-xs font-bold leading-5 text-[#75677f]">{reportAnalysis.summary}</p>
@@ -2116,8 +2529,8 @@ function InBodyIntelligenceCard({
           </div>
           );
         })}
-      </div>
-      <div className="mt-5">
+      </div>}
+      {showTrendGraph && <div className="mt-5">
         <p className="mb-3 text-xs font-black uppercase text-[#75677f]">InBody Trend Graph</p>
         <div className="h-64">
           {chartData.length ? (
@@ -2141,8 +2554,8 @@ function InBodyIntelligenceCard({
             <div className="flex h-full items-center justify-center rounded-2xl bg-mist text-center text-sm font-bold text-[#75677f]">Save InBody data to unlock the paper-style line trend.</div>
           )}
         </div>
-      </div>
-    </Card>
+      </div>}
+    </motion.section>
   );
 }
 

@@ -57,6 +57,7 @@ export type WorkoutSession = {
 export type MeasurementEntry = {
   id: string;
   date: string;
+  createdAt?: string;
   bodyWeight?: number;
   bust?: number;
   leftArm?: number;
