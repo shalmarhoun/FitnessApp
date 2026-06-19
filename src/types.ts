@@ -4,8 +4,8 @@ export type ProgramExercise = {
   id: string;
   name: string;
   targetSets: number;
-  targetReps: number | "failure";
-  defaultWeight: number;
+  targetReps: string;
+  defaultWeight: string;
   unit: "kg" | "lb";
   restSeconds?: number;
   notes?: string;
@@ -33,7 +33,8 @@ export type LoggedExercise = {
   id: string;
   sourceExerciseId: string;
   name: string;
-  targetReps: number | "failure";
+  targetReps: string;
+  notes?: string;
   sets: LoggedSet[];
 };
 

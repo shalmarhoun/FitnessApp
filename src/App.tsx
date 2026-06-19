@@ -111,6 +111,11 @@ const pageMotion = {
 
 const uid = () => crypto.randomUUID();
 const brandIconSrc = `${import.meta.env.BASE_URL}icons/icon-192.png`;
+const numericFromText = (value: string | number | undefined, fallback = 0) => {
+  if (typeof value === "number") return Number.isFinite(value) ? value : fallback;
+  const parsed = Number.parseFloat(String(value ?? "").replace(/[^0-9.-]+/g, ""));
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
 const getErrorMessage = (error: unknown, fallback: string) => {
   if (error instanceof Error) return error.message;
   if (typeof error === "object" && error && "message" in error && typeof (error as { message?: unknown }).message === "string") {
@@ -369,13 +374,16 @@ function App() {
         sourceExerciseId: exercise.id,
         name: exercise.name,
         targetReps: exercise.targetReps,
+        notes: exercise.notes,
         sets: Array.from({ length: exercise.targetSets }).map((_, index) => {
           const previousSet = previousExercise?.sets[index];
+          const targetRepsNumber = numericFromText(exercise.targetReps, previousSet?.reps ?? 10);
+          const defaultWeightNumber = numericFromText(exercise.defaultWeight, previousSet?.weight ?? 0);
           return {
             id: uid(),
             setNumber: index + 1,
-            reps: typeof exercise.targetReps === "number" ? exercise.targetReps : previousSet?.reps ?? 30,
-            weight: previousSet?.weight ?? exercise.defaultWeight,
+            reps: previousSet?.reps ?? targetRepsNumber,
+            weight: previousSet?.weight ?? defaultWeightNumber,
             unit: exercise.unit,
             completed: false,
           };
@@ -1027,6 +1035,7 @@ function ActiveWorkout({
   const [pausedStartedAt, setPausedStartedAt] = useState<number | null>(null);
   const [pausedTotalMs, setPausedTotalMs] = useState(0);
   const previous = latestPreviousSession(data.sessions, activeSession.programDayId);
+  const currentProgramDay = data.program.days.find((day) => day.id === activeSession.programDayId);
   const completedSets = activeSession.exercises.reduce((sum, exercise) => sum + exercise.sets.filter((set) => set.completed).length, 0);
   const totalSets = activeSession.exercises.reduce((sum, exercise) => sum + exercise.sets.length, 0);
 
@@ -1115,6 +1124,17 @@ function ActiveWorkout({
         </div>
       </div>
 
+      {currentProgramDay?.warmup.length ? (
+        <Card className="mb-5 rounded-[26px] p-4 sm:rounded-[32px] sm:p-5">
+          <p className="mb-3 text-xs font-black uppercase tracking-[0.12em] text-lavender">Warm Up</p>
+          <div className="flex flex-wrap gap-2">
+            {currentProgramDay.warmup.map((item) => (
+              <span className="rounded-full bg-mist px-3 py-2 text-xs font-black text-plum" key={item}>{item}</span>
+            ))}
+          </div>
+        </Card>
+      ) : null}
+
       <div className="space-y-5">
         {activeSession.exercises.map((exercise) => (
           <ExerciseLogger key={exercise.id} exercise={exercise} previous={previous?.exercises.find((item) => item.sourceExerciseId === exercise.sourceExerciseId)} updateSet={updateSet} />
@@ -1150,8 +1170,9 @@ const ExerciseLogger = ({
         <div className="min-w-0">
           <h2 className="text-xl font-black leading-snug text-ink sm:text-2xl">{exercise.name}</h2>
           <p className="mt-2 text-sm font-bold text-[#75677f] sm:text-base">
-            Target {exercise.sets.length} x {exercise.targetReps === "failure" ? "failure" : exercise.targetReps}
+            Target {exercise.sets.length} x {exercise.targetReps}
           </p>
+          {exercise.notes && <p className="mt-3 rounded-2xl bg-[#fff8fc] px-3 py-2 text-xs font-bold leading-5 text-plum">Coach note: {exercise.notes}</p>}
         </div>
         <div className="shrink-0 rounded-full bg-mist px-3 py-2 text-sm font-black text-lavender sm:px-4 sm:py-3">{completed}/{exercise.sets.length}</div>
       </div>
@@ -2777,6 +2798,35 @@ function ProgramEditor({ data, updateData }: { data: AppData; updateData: (updat
       };
     });
 
+  const updateWarmup = (dayId: string, index: number, value: string) =>
+    updateData((current) => ({
+      ...current,
+      program: {
+        ...current.program,
+        days: current.program.days.map((day) =>
+          day.id === dayId ? { ...day, warmup: day.warmup.map((item, itemIndex) => (itemIndex === index ? value : item)) } : day,
+        ),
+      },
+    }));
+
+  const addWarmup = (dayId: string) =>
+    updateData((current) => ({
+      ...current,
+      program: {
+        ...current.program,
+        days: current.program.days.map((day) => (day.id === dayId ? { ...day, warmup: [...day.warmup, "New Warm Up"] } : day)),
+      },
+    }));
+
+  const removeWarmup = (dayId: string, index: number) =>
+    updateData((current) => ({
+      ...current,
+      program: {
+        ...current.program,
+        days: current.program.days.map((day) => (day.id === dayId ? { ...day, warmup: day.warmup.filter((_, itemIndex) => itemIndex !== index) } : day)),
+      },
+    }));
+
   const updateExercise = (dayId: string, exerciseId: string, patch: Partial<ProgramExercise>) =>
     updateData((current) => ({
       ...current,
@@ -2799,7 +2849,7 @@ function ProgramEditor({ data, updateData }: { data: AppData; updateData: (updat
                 ...day,
                 exercises: [
                   ...day.exercises,
-                  { id: uid(), name: "New Exercise", targetSets: 3, targetReps: 10, defaultWeight: 0, unit: "kg", restSeconds: 90 },
+                  { id: uid(), name: "New Exercise", targetSets: 3, targetReps: "10", defaultWeight: "0", unit: "kg", restSeconds: 90, notes: "" },
                 ],
               }
             : day,
@@ -2926,15 +2976,39 @@ function ProgramEditor({ data, updateData }: { data: AppData; updateData: (updat
                         <button aria-label="Remove day" className="rounded-xl bg-[#fff0f4] text-[#a93f5b] ring-1 ring-[#ffd2de]" onClick={() => removeDay(day.id)} type="button"><X className="mx-auto" size={16} /></button>
                       </div>
                     </div>
+
+                    <div className="mt-4 rounded-[22px] bg-[#fbf7ff] p-3 ring-1 ring-silk">
+                      <div className="mb-3 flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-[10px] font-black uppercase tracking-[0.12em] text-lavender">Warm Up</p>
+                          <p className="mt-1 text-xs font-bold text-[#75677f]">Shown before exercises during the workout.</p>
+                        </div>
+                        <Button variant="soft" className="min-h-10 rounded-xl text-xs" onClick={() => addWarmup(day.id)}>
+                          <Plus size={15} /> Add
+                        </Button>
+                      </div>
+                      <div className="grid gap-2">
+                        {day.warmup.length ? day.warmup.map((item, index) => (
+                          <div className="grid grid-cols-[1fr_44px] gap-2" key={`${day.id}-warmup-${index}`}>
+                            <input className="h-11 rounded-xl border border-silk bg-white px-3 text-sm font-bold outline-none focus:ring-2 focus:ring-lilac" value={item} onChange={(event) => updateWarmup(day.id, index, event.target.value)} />
+                            <button aria-label="Remove warm up" className="rounded-xl bg-[#fff0f4] text-[#a93f5b] ring-1 ring-[#ffd2de]" onClick={() => removeWarmup(day.id, index)} type="button"><X className="mx-auto" size={16} /></button>
+                          </div>
+                        )) : (
+                          <p className="rounded-xl bg-white/75 px-3 py-3 text-xs font-bold text-[#75677f]">No warm up yet.</p>
+                        )}
+                      </div>
+                    </div>
+
                     <div className="mt-3 space-y-3">
                       {day.exercises.map((exercise) => (
-                        <div className="grid gap-2 rounded-2xl bg-mist/60 p-3 md:grid-cols-[1fr_72px_72px_82px_82px_152px]" key={exercise.id}>
-                          <label className="grid gap-1 text-[9px] font-black uppercase tracking-[0.1em] text-[#75677f]">Exercise<input className="h-11 rounded-xl border border-silk bg-white px-3 text-sm font-bold normal-case tracking-normal outline-none" value={exercise.name} onChange={(event) => updateExercise(day.id, exercise.id, { name: event.target.value })} /></label>
-                          <label className="grid gap-1 text-[9px] font-black uppercase tracking-[0.1em] text-[#75677f]">Sets<input className="h-11 rounded-xl border border-silk bg-white px-3 text-sm font-bold normal-case tracking-normal outline-none" type="number" value={exercise.targetSets} onChange={(event) => updateExercise(day.id, exercise.id, { targetSets: Number(event.target.value) })} /></label>
-                          <label className="grid gap-1 text-[9px] font-black uppercase tracking-[0.1em] text-[#75677f]">Reps<input className="h-11 rounded-xl border border-silk bg-white px-3 text-sm font-bold normal-case tracking-normal outline-none" value={exercise.targetReps} onChange={(event) => updateExercise(day.id, exercise.id, { targetReps: event.target.value === "failure" ? "failure" : Number(event.target.value) })} /></label>
-                          <label className="grid gap-1 text-[9px] font-black uppercase tracking-[0.1em] text-[#75677f]">Weight<input className="h-11 rounded-xl border border-silk bg-white px-3 text-sm font-bold normal-case tracking-normal outline-none" type="number" value={exercise.defaultWeight} onChange={(event) => updateExercise(day.id, exercise.id, { defaultWeight: Number(event.target.value) })} /></label>
-                          <label className="grid gap-1 text-[9px] font-black uppercase tracking-[0.1em] text-[#75677f]">Rest<input className="h-11 rounded-xl border border-silk bg-white px-3 text-sm font-bold normal-case tracking-normal outline-none" type="number" value={exercise.restSeconds ?? data.preferences.defaultRestSeconds} onChange={(event) => updateExercise(day.id, exercise.id, { restSeconds: Number(event.target.value) })} /></label>
-                          <div className="grid grid-cols-3 gap-2">
+                        <div className="rounded-2xl bg-mist/60 p-3" key={exercise.id}>
+                          <div className="grid gap-2 md:grid-cols-[1fr_72px_120px_132px_82px_152px]">
+                            <label className="grid gap-1 text-[9px] font-black uppercase tracking-[0.1em] text-[#75677f]">Exercise<input className="h-11 rounded-xl border border-silk bg-white px-3 text-sm font-bold normal-case tracking-normal outline-none" value={exercise.name} onChange={(event) => updateExercise(day.id, exercise.id, { name: event.target.value })} /></label>
+                            <label className="grid gap-1 text-[9px] font-black uppercase tracking-[0.1em] text-[#75677f]">Sets<input className="h-11 rounded-xl border border-silk bg-white px-3 text-sm font-bold normal-case tracking-normal outline-none" type="number" value={exercise.targetSets} onChange={(event) => updateExercise(day.id, exercise.id, { targetSets: Number(event.target.value) })} /></label>
+                            <label className="grid gap-1 text-[9px] font-black uppercase tracking-[0.1em] text-[#75677f]">Reps<input className="h-11 rounded-xl border border-silk bg-white px-3 text-sm font-bold normal-case tracking-normal outline-none" value={exercise.targetReps} onChange={(event) => updateExercise(day.id, exercise.id, { targetReps: event.target.value })} /></label>
+                            <label className="grid gap-1 text-[9px] font-black uppercase tracking-[0.1em] text-[#75677f]">Weight<input className="h-11 rounded-xl border border-silk bg-white px-3 text-sm font-bold normal-case tracking-normal outline-none" value={exercise.defaultWeight} onChange={(event) => updateExercise(day.id, exercise.id, { defaultWeight: event.target.value })} /></label>
+                            <label className="grid gap-1 text-[9px] font-black uppercase tracking-[0.1em] text-[#75677f]">Rest<input className="h-11 rounded-xl border border-silk bg-white px-3 text-sm font-bold normal-case tracking-normal outline-none" type="number" value={exercise.restSeconds ?? data.preferences.defaultRestSeconds} onChange={(event) => updateExercise(day.id, exercise.id, { restSeconds: Number(event.target.value) })} /></label>
+                            <div className="grid grid-cols-3 gap-2">
                             <button aria-label="Move exercise up" className="rounded-xl bg-white text-plum ring-1 ring-silk" onClick={() => moveExercise(day.id, exercise.id, -1)} type="button">
                               <ChevronUp className="mx-auto" size={17} />
                             </button>
@@ -2944,7 +3018,12 @@ function ProgramEditor({ data, updateData }: { data: AppData; updateData: (updat
                             <button aria-label="Remove exercise" className="rounded-xl bg-[#fff0f4] text-[#a93f5b] ring-1 ring-[#ffd2de]" onClick={() => removeExercise(day.id, exercise.id)} type="button">
                               <X className="mx-auto" size={16} />
                             </button>
+                            </div>
                           </div>
+                          <label className="mt-2 grid gap-1 text-[9px] font-black uppercase tracking-[0.1em] text-[#75677f]">
+                            Coach Notes
+                            <textarea className="min-h-20 rounded-xl border border-silk bg-white px-3 py-2 text-sm font-bold normal-case tracking-normal outline-none focus:ring-2 focus:ring-lilac" placeholder="Technique cue, tempo, injury note, or coach instruction" value={exercise.notes ?? ""} onChange={(event) => updateExercise(day.id, exercise.id, { notes: event.target.value })} />
+                          </label>
                         </div>
                       ))}
                     </div>

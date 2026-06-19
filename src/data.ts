@@ -6,12 +6,12 @@ export const weekdays: Weekday[] = ["Sunday", "Monday", "Tuesday", "Wednesday", 
 
 const id = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
-const exercise = (name: string, sets: number, reps: number | "failure", weight = 0, unit: "kg" | "lb" = "kg"): ProgramExercise => ({
+const exercise = (name: string, sets: number, reps: number | string, weight: number | string = 0, unit: "kg" | "lb" = "kg"): ProgramExercise => ({
   id: id(name),
   name,
   targetSets: sets,
-  targetReps: reps,
-  defaultWeight: weight,
+  targetReps: String(reps),
+  defaultWeight: String(weight),
   unit,
   restSeconds: 90,
 });
