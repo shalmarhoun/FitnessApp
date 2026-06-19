@@ -285,6 +285,79 @@ export const updateWorkoutFinishedNotificationNotes = async (ownerId: string, se
     .eq("event_type", "workout_finished");
 };
 
+const base64UrlToUint8Array = (value: string) => {
+  const padding = "=".repeat((4 - (value.length % 4)) % 4);
+  const base64 = `${value}${padding}`.replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = window.atob(base64);
+  const output = new Uint8Array(rawData.length);
+  for (let index = 0; index < rawData.length; index += 1) output[index] = rawData.charCodeAt(index);
+  return output;
+};
+
+export const getPushSupportStatus = () => {
+  if (typeof window === "undefined") return { supported: false, message: "Phone notifications are not available here." };
+  if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
+    return { supported: false, message: "This browser does not support phone notifications." };
+  }
+  if (!import.meta.env.VITE_VAPID_PUBLIC_KEY) {
+    return { supported: false, message: "Phone notification public key is missing." };
+  }
+  return { supported: true, message: Notification.permission };
+};
+
+export const subscribeToWorkoutPushNotifications = async () => {
+  const support = getPushSupportStatus();
+  if (!support.supported) throw new Error(support.message);
+
+  const permission = await Notification.requestPermission();
+  if (permission !== "granted") throw new Error("Phone notification permission was not granted.");
+
+  const session = await getCurrentSession();
+  const token = session?.access_token;
+  if (!token) throw new Error("Sign in before enabling phone notifications.");
+
+  const registration = await navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`);
+  const existingSubscription = await registration.pushManager.getSubscription();
+  const subscription =
+    existingSubscription ??
+    (await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: base64UrlToUint8Array(import.meta.env.VITE_VAPID_PUBLIC_KEY),
+    }));
+
+  const response = await fetch("/api/push-subscribe", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ subscription: subscription.toJSON() }),
+  });
+
+  const payload = (await response.json().catch(() => null)) as { message?: string } | null;
+  if (!response.ok) throw new Error(payload?.message ?? "Unable to enable phone notifications.");
+  return payload?.message ?? "Phone notifications are enabled.";
+};
+
+export const sendWorkoutPushNotification = async (sessionToSend: WorkoutSession) => {
+  const session = await getCurrentSession();
+  const token = session?.access_token;
+  if (!token) return null;
+
+  const response = await fetch("/api/push-workout-finished", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ session: sessionToSend }),
+  });
+
+  const payload = (await response.json().catch(() => null)) as { message?: string; sent?: number; failed?: number } | null;
+  if (!response.ok) throw new Error(payload?.message ?? "Unable to send workout phone notification.");
+  return payload;
+};
+
 export const deleteWorkoutSessionRows = async (ownerId: string, sessionId: string) => {
   if (!supabase) return;
   const { error } = await supabase.from("workout_sessions").delete().eq("owner_id", ownerId).eq("id", sessionId);

@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   ArrowRight,
   BarChart3,
+  BellRing,
   Calendar,
   Check,
   ChevronLeft,
@@ -77,6 +78,7 @@ import {
   emptyCloudState,
   getCurrentSession,
   getCloudOwnerId,
+  getPushSupportStatus,
   isOwnerProfile,
   listAIReports,
   listAppNotifications,
@@ -92,7 +94,9 @@ import {
   saveWorkoutSessionRows,
   signInWithPassword,
   signOutCloud,
+  sendWorkoutPushNotification,
   subscribeToAuth,
+  subscribeToWorkoutPushNotifications,
   deleteWorkoutSessionRows,
   deleteInBodyReport,
   updateInBodyReportMetrics,
@@ -211,6 +215,64 @@ const Stat = ({ label, value, icon }: { label: string; value: string; icon: Reac
     <div className="soft-wave mt-2 text-lavender" />
   </div>
 );
+
+const PushNotificationButton = () => {
+  const [status, setStatus] = useState<"checking" | "unsupported" | "ready" | "enabled" | "denied" | "error">("checking");
+  const [message, setMessage] = useState("Checking phone notification support...");
+
+  useEffect(() => {
+    const support = getPushSupportStatus();
+    if (!support.supported) {
+      setStatus("unsupported");
+      setMessage(support.message);
+      return;
+    }
+    if (Notification.permission === "granted") {
+      setStatus("enabled");
+      setMessage("Phone notifications are enabled on this device.");
+    } else if (Notification.permission === "denied") {
+      setStatus("denied");
+      setMessage("Notifications are blocked in this browser's settings.");
+    } else {
+      setStatus("ready");
+      setMessage("Enable this once on the coach phone to receive workout finish alerts.");
+    }
+  }, []);
+
+  const enable = async () => {
+    setStatus("checking");
+    setMessage("Connecting this device...");
+    try {
+      const result = await subscribeToWorkoutPushNotifications();
+      setStatus("enabled");
+      setMessage(result);
+    } catch (error) {
+      setStatus("error");
+      setMessage(getErrorMessage(error, "Unable to enable phone notifications."));
+    }
+  };
+
+  return (
+    <div className="rounded-[24px] border border-silk bg-white/75 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-start gap-3">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-mist text-lavender">
+            <BellRing size={19} />
+          </span>
+          <div>
+            <p className="text-sm font-black text-ink">Phone workout alerts</p>
+            <p className="mt-1 text-xs font-bold leading-5 text-[#75677f]">{message}</p>
+          </div>
+        </div>
+        {status !== "enabled" && status !== "unsupported" && (
+          <Button variant="soft" className="h-11 rounded-2xl px-4" onClick={enable} disabled={status === "checking" || status === "denied"}>
+            Enable
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+};
 
 const NumberField = ({
   value,
@@ -418,7 +480,7 @@ function App() {
       achievements: current.achievements.map((achievement) => (earned.includes(achievement.id) && !achievement.earnedAt ? { ...achievement, earnedAt: session.completedAt } : achievement)),
     }));
     if (cloud.ownerId && canEditProgram(cloud.profile, cloud.user)) {
-      Promise.all([saveWorkoutSessionRows(cloud.ownerId, session), sendWorkoutFinishedNotification(cloud.ownerId, session)])
+      Promise.all([saveWorkoutSessionRows(cloud.ownerId, session), sendWorkoutFinishedNotification(cloud.ownerId, session), sendWorkoutPushNotification(session).catch(() => null)])
         .then(([, notification]) => {
           if (notification) setCloud((current) => ({ ...current, notifications: [notification, ...current.notifications].slice(0, 8) }));
         })
@@ -873,16 +935,22 @@ function Dashboard({
         <MiniVolumeChart sessions={data.sessions} />
       </Card>
 
-      {canSeeNotifications && cloud.notifications.length > 0 && (
+      {canSeeNotifications && (
         <Card className="mt-5">
           <div className="mb-4 flex items-center justify-between gap-3">
             <div>
               <p className="text-xs font-black uppercase text-[#75677f]">Coach Notifications</p>
-              <h2 className="mt-1 text-xl font-black text-ink">Recent completed workouts.</h2>
+              <h2 className="mt-1 text-xl font-black text-ink">Workout finish alerts and review queue.</h2>
             </div>
             <span className="rounded-full bg-mist px-3 py-2 text-xs font-black text-lavender">{cloud.notifications.length}</span>
           </div>
-          <div className="grid gap-2">
+          <PushNotificationButton />
+          <div className="mt-3 grid gap-2">
+            {cloud.notifications.length === 0 && (
+              <div className="mt-3 rounded-2xl bg-white/60 p-4 text-sm font-bold text-[#75677f] ring-1 ring-silk">
+                No completed workouts are waiting for review yet.
+              </div>
+            )}
             {cloud.notifications.slice(0, 4).map((notification) => (
               <div className="rounded-2xl bg-white/75 p-3 ring-1 ring-silk" key={notification.id}>
                 <p className="text-sm font-black text-ink">{notification.metadata.workoutTitle ?? notification.metadata.title ?? "Workout completed"}</p>
