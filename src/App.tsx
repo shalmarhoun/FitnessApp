@@ -79,6 +79,7 @@ import {
   getCloudOwnerId,
   isOwnerProfile,
   listAIReports,
+  listAppNotifications,
   listInBodyReports,
   listPermissionInvites,
   loadCloudSnapshot,
@@ -87,6 +88,7 @@ import {
   saveCloudSnapshot,
   saveAIReport,
   saveManualInBodyReport,
+  sendWorkoutFinishedNotification,
   saveWorkoutSessionRows,
   signInWithPassword,
   signOutCloud,
@@ -94,6 +96,7 @@ import {
   deleteWorkoutSessionRows,
   deleteInBodyReport,
   updateInBodyReportMetrics,
+  updateWorkoutFinishedNotificationNotes,
   uploadInBodyReport,
   upsertProfile,
   type CloudRole,
@@ -284,16 +287,17 @@ function App() {
         } else {
           if (canEditProgram(profile, session.user)) await saveCloudSnapshot(ownerId, data);
         }
-        const [inbodyReports, aiReports] = await Promise.all([
+        const [inbodyReports, aiReports, notifications] = await Promise.all([
           listInBodyReports(ownerId).catch(() => []),
           listAIReports(ownerId).catch(() => []),
+          listAppNotifications(ownerId).catch(() => []),
         ]);
         if (mounted && (inbodyReports.length || aiReports.length)) {
           setData((current) => dataForRole({ ...current, inbodyReports, aiReports }, isOwnerProfile(profile, session.user)));
         }
         const permissions = profile && isOwnerProfile(profile, session.user) ? await listPermissionInvites(session.user.id) : [];
         if (!mounted) return;
-        setCloud({ configured: true, session, user: session.user, profile, ownerId, permissions, status: "synced", message: "Cloud sync is active." });
+        setCloud({ configured: true, session, user: session.user, profile, ownerId, permissions, notifications, status: "synced", message: "Cloud sync is active." });
       } catch (error) {
         if (!mounted) return;
         const message = getErrorMessage(error, "Unable to connect to Supabase.");
@@ -303,7 +307,7 @@ function App() {
     hydrate();
     const unsubscribe = subscribeToAuth((session) => {
       if (!mounted) return;
-      setCloud((current) => ({ ...current, session, user: session?.user ?? null, profile: session ? current.profile : null, ownerId: session ? current.ownerId : null, permissions: session ? current.permissions : [], status: session ? "syncing" : current.configured ? "ready" : "offline" }));
+      setCloud((current) => ({ ...current, session, user: session?.user ?? null, profile: session ? current.profile : null, ownerId: session ? current.ownerId : null, permissions: session ? current.permissions : [], notifications: session ? current.notifications : [], status: session ? "syncing" : current.configured ? "ready" : "offline" }));
       hydrate();
     });
     return () => {
@@ -375,7 +379,7 @@ function App() {
         name: exercise.name,
         targetReps: exercise.targetReps,
         notes: exercise.notes,
-        sets: Array.from({ length: exercise.targetSets }).map((_, index) => {
+        sets: Array.from({ length: Math.max(1, Math.round(numericFromText(exercise.targetSets, 1))) }).map((_, index) => {
           const previousSet = previousExercise?.sets[index];
           const targetRepsNumber = numericFromText(exercise.targetReps, previousSet?.reps ?? 10);
           const defaultWeightNumber = numericFromText(exercise.defaultWeight, previousSet?.weight ?? 0);
@@ -414,9 +418,13 @@ function App() {
       achievements: current.achievements.map((achievement) => (earned.includes(achievement.id) && !achievement.earnedAt ? { ...achievement, earnedAt: session.completedAt } : achievement)),
     }));
     if (cloud.ownerId && canEditProgram(cloud.profile, cloud.user)) {
-      saveWorkoutSessionRows(cloud.ownerId, session).catch((error) => {
-        setCloud((current) => ({ ...current, status: "error", message: error instanceof Error ? error.message : "Workout saved locally, but Supabase row sync failed." }));
-      });
+      Promise.all([saveWorkoutSessionRows(cloud.ownerId, session), sendWorkoutFinishedNotification(cloud.ownerId, session)])
+        .then(([, notification]) => {
+          if (notification) setCloud((current) => ({ ...current, notifications: [notification, ...current.notifications].slice(0, 8) }));
+        })
+        .catch((error) => {
+          setCloud((current) => ({ ...current, status: "error", message: error instanceof Error ? error.message : "Workout saved locally, but Supabase row sync failed." }));
+        });
     }
     setCompletedSession(session);
     setActiveSession(null);
@@ -449,7 +457,7 @@ function App() {
             <div className="mx-auto w-full max-w-5xl px-3 py-4 sm:px-4 sm:py-5 md:px-8 md:py-6">
               <main className="min-w-0 flex-1">
                 <AnimatePresence mode="wait">
-                  {view === "home" && <Dashboard key="home" data={data} selectedDate={selectedDate} selectedWorkout={selectedWorkout} startWorkout={startWorkout} setView={setView} openCalendar={() => setCalendarOpen(true)} canStartWorkout={ownerSignedIn} />}
+                  {view === "home" && <Dashboard key="home" data={data} selectedDate={selectedDate} selectedWorkout={selectedWorkout} startWorkout={startWorkout} setView={setView} openCalendar={() => setCalendarOpen(true)} canStartWorkout={ownerSignedIn} cloud={cloud} />}
                   {view === "workout" && (
                     <Workout
                       key="workout"
@@ -464,6 +472,8 @@ function App() {
                       updateData={updateData}
                       setView={setView}
                       canStartWorkout={ownerSignedIn}
+                      cloud={cloud}
+                      setCloud={setCloud}
                     />
                   )}
                   {view === "progress" && <Progress key="progress" data={data} />}
@@ -723,6 +733,7 @@ function Dashboard({
   setView,
   openCalendar,
   canStartWorkout,
+  cloud,
 }: {
   data: AppData;
   selectedDate: Date;
@@ -731,6 +742,7 @@ function Dashboard({
   setView: (view: View) => void;
   openCalendar: () => void;
   canStartWorkout: boolean;
+  cloud: CloudState;
 }) {
   const weekSessions = sameWeekSessions(data.sessions, selectedDate);
   const weeklyDone = new Set(weekSessions.map((session) => session.scheduledWeekday));
@@ -743,6 +755,7 @@ function Dashboard({
   const isPast = isBeforeToday(selectedDate);
   const isSaturday = weekdayName(selectedDate) === "Saturday";
   const nextWorkout = nextWorkoutFromDate(data.program.days, selectedDate);
+  const canSeeNotifications = cloud.profile?.role === "admin" || cloud.profile?.role === "coach";
 
   return (
     <motion.div {...pageMotion}>
@@ -859,6 +872,30 @@ function Dashboard({
         </div>
         <MiniVolumeChart sessions={data.sessions} />
       </Card>
+
+      {canSeeNotifications && cloud.notifications.length > 0 && (
+        <Card className="mt-5">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-xs font-black uppercase text-[#75677f]">Coach Notifications</p>
+              <h2 className="mt-1 text-xl font-black text-ink">Recent completed workouts.</h2>
+            </div>
+            <span className="rounded-full bg-mist px-3 py-2 text-xs font-black text-lavender">{cloud.notifications.length}</span>
+          </div>
+          <div className="grid gap-2">
+            {cloud.notifications.slice(0, 4).map((notification) => (
+              <div className="rounded-2xl bg-white/75 p-3 ring-1 ring-silk" key={notification.id}>
+                <p className="text-sm font-black text-ink">{notification.metadata.workoutTitle ?? notification.metadata.title ?? "Workout completed"}</p>
+                <p className="mt-1 text-xs font-bold text-[#75677f]">
+                  {notification.metadata.completedAt ? formatDisplayDate(new Date(notification.metadata.completedAt)) : formatDisplayDate(new Date(notification.created_at))}
+                  {typeof notification.metadata.totalVolume === "number" ? ` / ${Math.round(notification.metadata.totalVolume).toLocaleString()} volume` : ""}
+                </p>
+                {notification.metadata.notes && <p className="mt-2 rounded-xl bg-mist px-3 py-2 text-xs font-bold text-plum">Notes: {notification.metadata.notes}</p>}
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
     </motion.div>
   );
 }
@@ -974,6 +1011,8 @@ function Workout({
   updateData,
   setView,
   canStartWorkout,
+  cloud,
+  setCloud,
 }: {
   data: AppData;
   activeSession: ActiveSession | null;
@@ -986,9 +1025,11 @@ function Workout({
   updateData: (updater: (data: AppData) => AppData) => void;
   setView: (view: View) => void;
   canStartWorkout: boolean;
+  cloud: CloudState;
+  setCloud: React.Dispatch<React.SetStateAction<CloudState>>;
 }) {
   if (completedSession) {
-    return <WorkoutSummary session={completedSession} previous={latestPreviousSession(data.sessions.filter((item) => item.id !== completedSession.id), completedSession.programDayId)} updateData={updateData} setCompletedSession={setCompletedSession} />;
+    return <WorkoutSummary session={completedSession} previous={latestPreviousSession(data.sessions.filter((item) => item.id !== completedSession.id), completedSession.programDayId)} updateData={updateData} setCompletedSession={setCompletedSession} cloud={cloud} setCloud={setCloud} />;
   }
 
   if (!activeSession) {
@@ -1213,11 +1254,15 @@ function WorkoutSummary({
   previous,
   updateData,
   setCompletedSession,
+  cloud,
+  setCloud,
 }: {
   session: WorkoutSession;
   previous?: WorkoutSession;
   updateData: (updater: (data: AppData) => AppData) => void;
   setCompletedSession: (session: WorkoutSession | null) => void;
+  cloud: CloudState;
+  setCloud: React.Dispatch<React.SetStateAction<CloudState>>;
 }) {
   const [mood, setMood] = useState(session.mood ?? "Strong");
   const [energy, setEnergy] = useState(session.energy ?? 4);
@@ -1225,10 +1270,38 @@ function WorkoutSummary({
   const volumeDelta = previous ? session.totalVolume - previous.totalVolume : session.totalVolume;
 
   const saveSummary = () => {
+    const updatedSession = { ...session, mood, energy, notes };
     updateData((data) => ({
       ...data,
-      sessions: data.sessions.map((item) => (item.id === session.id ? { ...item, mood, energy, notes } : item)),
+      sessions: data.sessions.map((item) => (item.id === session.id ? updatedSession : item)),
     }));
+    if (cloud.ownerId && canEditProgram(cloud.profile, cloud.user)) {
+      saveWorkoutSessionRows(cloud.ownerId, updatedSession)
+        .then(() => updateWorkoutFinishedNotificationNotes(cloud.ownerId!, updatedSession))
+        .then(() =>
+          setCloud((current) => ({
+            ...current,
+            notifications: current.notifications.map((notification) =>
+              notification.entity_id === updatedSession.id
+                ? {
+                    ...notification,
+                    metadata: {
+                      ...notification.metadata,
+                      notes: updatedSession.notes,
+                      totalVolume: updatedSession.totalVolume,
+                      durationSeconds: updatedSession.durationSeconds,
+                      completedAt: updatedSession.completedAt,
+                      workoutTitle: updatedSession.title,
+                    },
+                  }
+                : notification,
+            ),
+            status: "synced",
+            message: "Workout summary synced.",
+          })),
+        )
+        .catch((error) => setCloud((current) => ({ ...current, status: "error", message: error instanceof Error ? error.message : "Workout notes saved locally, but Supabase sync failed." })));
+    }
     setCompletedSession(null);
   };
 
@@ -2055,7 +2128,7 @@ function CloudAccountCard({ cloud, setCloud, data }: { cloud: CloudState; setClo
     setBusy(true);
     try {
       await signOutCloud();
-      setCloud((current) => ({ ...current, session: null, user: null, profile: null, ownerId: null, permissions: [], status: current.configured ? "ready" : "offline", message: "Signed out." }));
+      setCloud((current) => ({ ...current, session: null, user: null, profile: null, ownerId: null, permissions: [], notifications: [], status: current.configured ? "ready" : "offline", message: "Signed out." }));
     } catch (error) {
       setCloud((current) => ({ ...current, status: "error", message: error instanceof Error ? error.message : "Unable to sign out." }));
     } finally {
@@ -2849,7 +2922,7 @@ function ProgramEditor({ data, updateData }: { data: AppData; updateData: (updat
                 ...day,
                 exercises: [
                   ...day.exercises,
-                  { id: uid(), name: "New Exercise", targetSets: 3, targetReps: "10", defaultWeight: "0", unit: "kg", restSeconds: 90, notes: "" },
+                  { id: uid(), name: "New Exercise", targetSets: "3", targetReps: "10", defaultWeight: "0", unit: "kg", restSeconds: 90, notes: "" },
                 ],
               }
             : day,
@@ -2935,7 +3008,7 @@ function ProgramEditor({ data, updateData }: { data: AppData; updateData: (updat
       <div className="mt-4 space-y-3">
         {data.program.days.map((day) => {
           const isOpen = openDayIds.has(day.id);
-          const totalSets = day.exercises.reduce((sum, exercise) => sum + exercise.targetSets, 0);
+          const totalSets = day.exercises.reduce((sum, exercise) => sum + numericFromText(exercise.targetSets, 0), 0);
           return (
           <div className="rounded-[20px] border border-silk bg-white/65 p-4" key={day.id}>
             <div className="flex items-center justify-between gap-3">
@@ -3004,7 +3077,7 @@ function ProgramEditor({ data, updateData }: { data: AppData; updateData: (updat
                         <div className="rounded-2xl bg-mist/60 p-3" key={exercise.id}>
                           <div className="grid gap-2 md:grid-cols-[1fr_72px_120px_132px_82px_152px]">
                             <label className="grid gap-1 text-[9px] font-black uppercase tracking-[0.1em] text-[#75677f]">Exercise<input className="h-11 rounded-xl border border-silk bg-white px-3 text-sm font-bold normal-case tracking-normal outline-none" value={exercise.name} onChange={(event) => updateExercise(day.id, exercise.id, { name: event.target.value })} /></label>
-                            <label className="grid gap-1 text-[9px] font-black uppercase tracking-[0.1em] text-[#75677f]">Sets<input className="h-11 rounded-xl border border-silk bg-white px-3 text-sm font-bold normal-case tracking-normal outline-none" type="number" value={exercise.targetSets} onChange={(event) => updateExercise(day.id, exercise.id, { targetSets: Number(event.target.value) })} /></label>
+                            <label className="grid gap-1 text-[9px] font-black uppercase tracking-[0.1em] text-[#75677f]">Sets<input className="h-11 rounded-xl border border-silk bg-white px-3 text-sm font-bold normal-case tracking-normal outline-none" value={exercise.targetSets} onChange={(event) => updateExercise(day.id, exercise.id, { targetSets: event.target.value })} /></label>
                             <label className="grid gap-1 text-[9px] font-black uppercase tracking-[0.1em] text-[#75677f]">Reps<input className="h-11 rounded-xl border border-silk bg-white px-3 text-sm font-bold normal-case tracking-normal outline-none" value={exercise.targetReps} onChange={(event) => updateExercise(day.id, exercise.id, { targetReps: event.target.value })} /></label>
                             <label className="grid gap-1 text-[9px] font-black uppercase tracking-[0.1em] text-[#75677f]">Weight<input className="h-11 rounded-xl border border-silk bg-white px-3 text-sm font-bold normal-case tracking-normal outline-none" value={exercise.defaultWeight} onChange={(event) => updateExercise(day.id, exercise.id, { defaultWeight: event.target.value })} /></label>
                             <label className="grid gap-1 text-[9px] font-black uppercase tracking-[0.1em] text-[#75677f]">Rest<input className="h-11 rounded-xl border border-silk bg-white px-3 text-sm font-bold normal-case tracking-normal outline-none" type="number" value={exercise.restSeconds ?? data.preferences.defaultRestSeconds} onChange={(event) => updateExercise(day.id, exercise.id, { restSeconds: Number(event.target.value) })} /></label>

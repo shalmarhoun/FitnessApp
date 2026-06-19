@@ -32,6 +32,25 @@ export type PermissionInvite = {
   created_at: string;
 };
 
+export type AppNotification = {
+  id: string;
+  owner_id: string;
+  actor_id?: string | null;
+  event_type: string;
+  entity_type: string;
+  entity_id?: string | null;
+  metadata: {
+    title?: string;
+    message?: string;
+    workoutTitle?: string;
+    completedAt?: string;
+    durationSeconds?: number;
+    totalVolume?: number;
+    notes?: string;
+  };
+  created_at: string;
+};
+
 export type CloudState = {
   configured: boolean;
   session: Session | null;
@@ -39,6 +58,7 @@ export type CloudState = {
   profile: CloudProfile | null;
   ownerId: string | null;
   permissions: PermissionInvite[];
+  notifications: AppNotification[];
   status: "offline" | "ready" | "syncing" | "synced" | "error";
   message?: string;
 };
@@ -50,6 +70,7 @@ export const emptyCloudState: CloudState = {
   profile: null,
   ownerId: null,
   permissions: [],
+  notifications: [],
   status: isSupabaseConfigured ? "ready" : "offline",
 };
 
@@ -204,6 +225,64 @@ export const saveWorkoutSessionRows = async (ownerId: string, session: WorkoutSe
     const { error } = await supabase.from("logged_sets").upsert(sets);
     if (error) throw error;
   }
+};
+
+export const sendWorkoutFinishedNotification = async (ownerId: string, session: WorkoutSession) => {
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from("app_audit_events")
+    .insert({
+      owner_id: ownerId,
+      actor_id: (await getCurrentSession())?.user.id,
+      event_type: "workout_finished",
+      entity_type: "workout_session",
+      entity_id: session.id,
+      metadata: {
+        title: "Workout completed",
+        message: `${session.title} was finished.`,
+        workoutTitle: session.title,
+        completedAt: session.completedAt,
+        durationSeconds: session.durationSeconds,
+        totalVolume: session.totalVolume,
+        notes: session.notes ?? null,
+      },
+    })
+    .select("id,owner_id,actor_id,event_type,entity_type,entity_id,metadata,created_at")
+    .single();
+  if (error) throw error;
+  return data as AppNotification;
+};
+
+export const listAppNotifications = async (ownerId: string) => {
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from("app_audit_events")
+    .select("id,owner_id,actor_id,event_type,entity_type,entity_id,metadata,created_at")
+    .eq("owner_id", ownerId)
+    .order("created_at", { ascending: false })
+    .limit(8);
+  if (error) throw error;
+  return (data ?? []) as AppNotification[];
+};
+
+export const updateWorkoutFinishedNotificationNotes = async (ownerId: string, session: WorkoutSession) => {
+  if (!supabase) return;
+  await supabase
+    .from("app_audit_events")
+    .update({
+      metadata: {
+        title: "Workout completed",
+        message: `${session.title} was finished.`,
+        workoutTitle: session.title,
+        completedAt: session.completedAt,
+        durationSeconds: session.durationSeconds,
+        totalVolume: session.totalVolume,
+        notes: session.notes ?? null,
+      },
+    })
+    .eq("owner_id", ownerId)
+    .eq("entity_id", session.id)
+    .eq("event_type", "workout_finished");
 };
 
 export const deleteWorkoutSessionRows = async (ownerId: string, sessionId: string) => {

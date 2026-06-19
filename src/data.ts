@@ -9,7 +9,7 @@ const id = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, "-").re
 const exercise = (name: string, sets: number, reps: number | string, weight: number | string = 0, unit: "kg" | "lb" = "kg"): ProgramExercise => ({
   id: id(name),
   name,
-  targetSets: sets,
+  targetSets: String(sets),
   targetReps: String(reps),
   defaultWeight: String(weight),
   unit,

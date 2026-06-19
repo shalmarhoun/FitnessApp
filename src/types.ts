@@ -3,7 +3,7 @@ export type Weekday = "Sunday" | "Monday" | "Tuesday" | "Wednesday" | "Thursday"
 export type ProgramExercise = {
   id: string;
   name: string;
-  targetSets: number;
+  targetSets: string;
   targetReps: string;
   defaultWeight: string;
   unit: "kg" | "lb";
